@@ -7,13 +7,13 @@ export async function extractTextFromFile(file: File): Promise<string> {
         const arrayBuffer = event.target?.result as ArrayBuffer;
         
         if (file.type === 'application/pdf') {
-          // For PDF files, we'll use a simple text extraction
-          // In a production environment, you'd want to use a proper PDF parser
           const text = await extractTextFromPDF(arrayBuffer);
           resolve(text);
         } else if (file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
-          // For DOCX files, extract text content
           const text = await extractTextFromDOCX(arrayBuffer);
+          resolve(text);
+        } else if (file.type === 'text/plain') {
+          const text = await extractTextFromTXT(arrayBuffer);
           resolve(text);
         } else {
           reject(new Error('Unsupported file type'));
@@ -26,6 +26,39 @@ export async function extractTextFromFile(file: File): Promise<string> {
     reader.onerror = () => reject(new Error('Failed to read file'));
     reader.readAsArrayBuffer(file);
   });
+}
+
+async function extractTextFromTXT(arrayBuffer: ArrayBuffer): Promise<string> {
+  const uint8Array = new Uint8Array(arrayBuffer);
+  
+  // Try UTF-8 first
+  try {
+    const text = new TextDecoder('utf-8').decode(uint8Array);
+    if (text && !text.includes('�')) {
+      return text.trim();
+    }
+  } catch (error) {
+    // Fall through to other encodings
+  }
+  
+  // Try UTF-16 for Arabic text
+  try {
+    const text = new TextDecoder('utf-16').decode(uint8Array);
+    if (text && !text.includes('�')) {
+      return text.trim();
+    }
+  } catch (error) {
+    // Fall through
+  }
+  
+  // Try Windows-1256 for Arabic text (fallback)
+  try {
+    const text = new TextDecoder('windows-1256').decode(uint8Array);
+    return text.trim();
+  } catch (error) {
+    // Final fallback
+    return new TextDecoder('utf-8', { fatal: false }).decode(uint8Array).trim();
+  }
 }
 
 async function extractTextFromPDF(arrayBuffer: ArrayBuffer): Promise<string> {
@@ -65,9 +98,9 @@ async function extractTextFromDOCX(arrayBuffer: ArrayBuffer): Promise<string> {
     return xmlMatches
       .map(match => match.replace(/<w:t[^>]*>|<\/w:t>/g, ''))
       .join(' ')
-      .replace(/&lt;/g, '<')
-      .replace(/&gt;/g, '>')
-      .replace(/&amp;/g, '&')
+      .replace(/</g, '<')
+      .replace(/>/g, '>')
+      .replace(/&/g, '&')
       .replace(/\s+/g, ' ')
       .trim();
   }
