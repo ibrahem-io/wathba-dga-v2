@@ -106,7 +106,14 @@ export default function CriteriaUploadBox({
       );
 
       // Combine all text content
-      const combinedText = extractedTexts.join('\n\n');
+      let combinedText = extractedTexts.join('\n\n');
+      
+      // Limit combined text to 80,000 characters to ensure we stay well under OpenAI's token limit
+      // This accounts for the system prompt and other overhead
+      const maxCombinedLength = 80000;
+      if (combinedText.length > maxCombinedLength) {
+        combinedText = combinedText.substring(0, maxCombinedLength) + '\n\n[Text truncated due to length...]';
+      }
 
       if (!combinedText || combinedText.trim().length < 50) {
         throw new Error(language === 'ar' 

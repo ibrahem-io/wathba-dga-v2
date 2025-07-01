@@ -35,7 +35,7 @@ async function extractTextFromTXT(arrayBuffer: ArrayBuffer): Promise<string> {
   try {
     const text = new TextDecoder('utf-8').decode(uint8Array);
     if (text && !text.includes('�')) {
-      return text.trim();
+      return text.trim().substring(0, 10000); // Limit to 10k characters
     }
   } catch (error) {
     // Fall through to other encodings
@@ -45,7 +45,7 @@ async function extractTextFromTXT(arrayBuffer: ArrayBuffer): Promise<string> {
   try {
     const text = new TextDecoder('utf-16').decode(uint8Array);
     if (text && !text.includes('�')) {
-      return text.trim();
+      return text.trim().substring(0, 10000); // Limit to 10k characters
     }
   } catch (error) {
     // Fall through
@@ -54,10 +54,10 @@ async function extractTextFromTXT(arrayBuffer: ArrayBuffer): Promise<string> {
   // Try Windows-1256 for Arabic text (fallback)
   try {
     const text = new TextDecoder('windows-1256').decode(uint8Array);
-    return text.trim();
+    return text.trim().substring(0, 10000); // Limit to 10k characters
   } catch (error) {
     // Final fallback
-    return new TextDecoder('utf-8', { fatal: false }).decode(uint8Array).trim();
+    return new TextDecoder('utf-8', { fatal: false }).decode(uint8Array).trim().substring(0, 10000);
   }
 }
 
@@ -67,23 +67,27 @@ async function extractTextFromPDF(arrayBuffer: ArrayBuffer): Promise<string> {
   const uint8Array = new Uint8Array(arrayBuffer);
   const text = new TextDecoder('utf-8').decode(uint8Array);
   
+  let extractedText = '';
+  
   // Basic text extraction - look for text between stream objects
   const textMatches = text.match(/stream\s*(.*?)\s*endstream/gs);
   if (textMatches) {
-    return textMatches
+    extractedText = textMatches
       .map(match => match.replace(/stream\s*|\s*endstream/g, ''))
       .join(' ')
       .replace(/[^\x20-\x7E\u0600-\u06FF\u0750-\u077F]/g, ' ')
       .replace(/\s+/g, ' ')
       .trim();
+  } else {
+    // Fallback: extract readable text
+    extractedText = text
+      .replace(/[^\x20-\x7E\u0600-\u06FF\u0750-\u077F]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
   }
   
-  // Fallback: extract readable text
-  return text
-    .replace(/[^\x20-\x7E\u0600-\u06FF\u0750-\u077F]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .substring(0, 10000); // Limit to first 10k characters
+  // Always limit to 10k characters
+  return extractedText.substring(0, 10000);
 }
 
 async function extractTextFromDOCX(arrayBuffer: ArrayBuffer): Promise<string> {
@@ -92,10 +96,12 @@ async function extractTextFromDOCX(arrayBuffer: ArrayBuffer): Promise<string> {
   const uint8Array = new Uint8Array(arrayBuffer);
   const text = new TextDecoder('utf-8').decode(uint8Array);
   
+  let extractedText = '';
+  
   // Extract text content from XML structure
   const xmlMatches = text.match(/<w:t[^>]*>(.*?)<\/w:t>/gs);
   if (xmlMatches) {
-    return xmlMatches
+    extractedText = xmlMatches
       .map(match => match.replace(/<w:t[^>]*>|<\/w:t>/g, ''))
       .join(' ')
       .replace(/</g, '<')
@@ -103,14 +109,16 @@ async function extractTextFromDOCX(arrayBuffer: ArrayBuffer): Promise<string> {
       .replace(/&/g, '&')
       .replace(/\s+/g, ' ')
       .trim();
+  } else {
+    // Fallback: extract readable text
+    extractedText = text
+      .replace(/[^\x20-\x7E\u0600-\u06FF\u0750-\u077F]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
   }
   
-  // Fallback: extract readable text
-  return text
-    .replace(/[^\x20-\x7E\u0600-\u06FF\u0750-\u077F]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .substring(0, 10000); // Limit to first 10k characters
+  // Always limit to 10k characters
+  return extractedText.substring(0, 10000);
 }
 
 export function detectLanguage(text: string): 'ar' | 'en' {
