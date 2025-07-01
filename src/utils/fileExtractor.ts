@@ -1,4 +1,5 @@
 import { ocrService } from './ocrService';
+import { enhancedPdfProcessor, ExtractionStrategy } from './enhancedPdfProcessor';
 
 export async function extractTextFromFile(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -92,43 +93,58 @@ async function extractTextFromTXT(arrayBuffer: ArrayBuffer): Promise<string> {
 }
 
 async function extractTextFromPDF(arrayBuffer: ArrayBuffer, file: File): Promise<string> {
-  // First try traditional PDF text extraction
-  let extractedText = await extractPDFText(arrayBuffer);
+  console.log(`🔍 Starting enhanced PDF extraction for: ${file.name}`);
   
-  // If traditional extraction yields insufficient text, try OCR
-  if (extractedText.length < 100) {
-    console.log(`PDF text extraction yielded only ${extractedText.length} characters. Attempting OCR...`);
-    
-    try {
-      const ocrResult = await ocrService.recognizeFromPDF(arrayBuffer, {
-        language: 'auto',
-        maxPages: 5, // Limit to first 5 pages for performance
-        onProgress: (progress) => {
-          console.log(`PDF OCR Progress: ${Math.round(progress * 100)}%`);
-        }
-      });
+  try {
+    // Use the enhanced PDF processor with auto strategy
+    const extractionStrategy: ExtractionStrategy = {
+      strategy: 'auto',
+      qualityThreshold: 0.6, // Slightly lower threshold for better coverage
+      maxPages: 10 // Limit OCR to first 10 pages for performance
+    };
 
-      if (ocrResult.text.length > extractedText.length) {
-        console.log(`OCR extracted ${ocrResult.text.length} characters vs ${extractedText.length} from traditional extraction`);
-        extractedText = ocrResult.text;
-      }
-    } catch (ocrError) {
-      console.warn('PDF OCR failed, using traditional extraction result:', ocrError);
-      // Continue with traditional extraction result
+    const result = await enhancedPdfProcessor.extractFromPDF(arrayBuffer, extractionStrategy);
+    
+    console.log(`✅ Enhanced PDF extraction completed:
+      - Method: ${result.method}
+      - Confidence: ${(result.confidence * 100).toFixed(1)}%
+      - Text length: ${result.text.length} characters
+      - Arabic ratio: ${(result.metadata.arabicRatio * 100).toFixed(1)}%
+      - Processing time: ${result.metadata.extractionTime}ms`);
+
+    if (result.text.length < 50) {
+      throw new Error(`Insufficient text extracted (${result.text.length} characters). Document may be image-based or corrupted.`);
     }
+
+    return result.text.substring(0, 50000);
+    
+  } catch (error) {
+    console.error('Enhanced PDF extraction failed:', error);
+    
+    // Fallback to basic extraction
+    console.log('🔄 Falling back to basic PDF extraction...');
+    try {
+      const basicText = await extractPDFTextBasic(arrayBuffer);
+      if (basicText.length >= 50) {
+        console.log(`✅ Basic extraction succeeded: ${basicText.length} characters`);
+        return basicText.substring(0, 50000);
+      }
+    } catch (basicError) {
+      console.error('Basic PDF extraction also failed:', basicError);
+    }
+    
+    throw new Error(`PDF extraction failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
-  
-  return extractedText.substring(0, 50000);
 }
 
-async function extractPDFText(arrayBuffer: ArrayBuffer): Promise<string> {
-  // Enhanced PDF text extraction
+async function extractPDFTextBasic(arrayBuffer: ArrayBuffer): Promise<string> {
+  // Basic PDF text extraction as fallback
   const uint8Array = new Uint8Array(arrayBuffer);
   const text = new TextDecoder('utf-8', { fatal: false }).decode(uint8Array);
   
   let extractedText = '';
   
-  // Method 1: Look for text between BT and ET markers (text objects)
+  // Method 1: Look for text between BT and ET markers
   const textObjectMatches = text.match(/BT\s*(.*?)\s*ET/gs);
   if (textObjectMatches && textObjectMatches.length > 0) {
     for (const match of textObjectMatches) {
@@ -149,7 +165,6 @@ async function extractPDFText(arrayBuffer: ArrayBuffer): Promise<string> {
         for (const tjArrayMatch of tjArrayMatches) {
           const arrayContent = tjArrayMatch.match(/\[(.*?)\]/);
           if (arrayContent && arrayContent[1]) {
-            // Extract strings from the array
             const strings = arrayContent[1].match(/\((.*?)\)/g);
             if (strings) {
               for (const str of strings) {
@@ -171,7 +186,6 @@ async function extractPDFText(arrayBuffer: ArrayBuffer): Promise<string> {
     if (streamMatches) {
       for (const match of streamMatches) {
         const streamContent = match.replace(/stream\s*|\s*endstream/g, '');
-        // Look for readable text patterns
         const readableText = streamContent.match(/[a-zA-Z\u0600-\u06FF\u0750-\u077F][a-zA-Z\u0600-\u06FF\u0750-\u077F\s]{2,}/g);
         if (readableText) {
           extractedText += readableText.join(' ') + ' ';
@@ -194,8 +208,7 @@ async function extractPDFText(arrayBuffer: ArrayBuffer): Promise<string> {
     .replace(/[^\x20-\x7E\u0600-\u06FF\u0750-\u077F\u0590-\u05FF]/g, ' ')
     .trim();
   
-  console.log(`PDF traditional extraction result: ${extractedText.length} characters extracted`);
-  
+  console.log(`Basic PDF extraction result: ${extractedText.length} characters extracted`);
   return extractedText;
 }
 
@@ -214,10 +227,10 @@ async function extractTextFromDOCX(arrayBuffer: ArrayBuffer): Promise<string> {
       if (content) {
         // Decode HTML entities
         const decoded = content
-          .replace(/</g, '<')
-          .replace(/>/g, '>')
-          .replace(/&/g, '&')
-          .replace(/"/g, '"')
+          .replace(/&lt;/g, '<')
+          .replace(/&gt;/g, '>')
+          .replace(/&amp;/g, '&')
+          .replace(/&quot;/g, '"')
           .replace(/&apos;/g, "'");
         extractedText += decoded + ' ';
       }
@@ -256,7 +269,6 @@ async function extractTextFromDOCX(arrayBuffer: ArrayBuffer): Promise<string> {
     .trim();
   
   console.log(`DOCX extraction result: ${extractedText.length} characters extracted`);
-  
   return extractedText.substring(0, 50000);
 }
 

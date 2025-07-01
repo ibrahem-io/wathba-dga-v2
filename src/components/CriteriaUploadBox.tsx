@@ -1,5 +1,5 @@
 import React, { useState, useCallback } from 'react';
-import { Upload, File, X, AlertCircle, CheckCircle, XCircle, Brain, Loader, Users, FileText, Eye } from 'lucide-react';
+import { Upload, File, X, AlertCircle, CheckCircle, XCircle, Brain, Loader, Users, FileText, Eye, Zap } from 'lucide-react';
 import { langchainService } from '../services/langchainService';
 
 interface CriteriaAnalysis {
@@ -37,8 +37,7 @@ export default function CriteriaUploadBox({
   const [error, setError] = useState<string>('');
   const [dragActive, setDragActive] = useState(false);
   const [analysisProgress, setAnalysisProgress] = useState<string>('');
-  const [ocrProgress, setOcrProgress] = useState<number>(0);
-  const [isUsingOCR, setIsUsingOCR] = useState(false);
+  const [processingMethod, setProcessingMethod] = useState<string>('');
 
   const handleDrag = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -71,7 +70,7 @@ export default function CriteriaUploadBox({
   };
 
   const handleFiles = (files: File[]) => {
-    const maxSize = 10 * 1024 * 1024; // Increased to 10MB for image files
+    const maxSize = 10 * 1024 * 1024; // 10MB for enhanced processing
     const allowedTypes = [
       'application/pdf', 
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -106,28 +105,29 @@ export default function CriteriaUploadBox({
 
     setIsAnalyzing(true);
     setError('');
-    setOcrProgress(0);
-    setIsUsingOCR(false);
-    setAnalysisProgress(language === 'ar' ? 'بدء التحليل...' : 'Starting analysis...');
+    setProcessingMethod('');
+    setAnalysisProgress(language === 'ar' ? 'بدء التحليل المتقدم...' : 'Starting advanced analysis...');
 
     try {
       const primaryFile = files[0];
       
-      // Check if it's an image file
+      // Set processing method based on file type
       if (primaryFile.type.startsWith('image/')) {
-        setIsUsingOCR(true);
-        setAnalysisProgress(language === 'ar' ? 'تحليل الصورة باستخدام تقنية التعرف الضوئي على الحروف...' : 'Analyzing image using OCR technology...');
+        setProcessingMethod('OCR');
+        setAnalysisProgress(language === 'ar' ? 'تحليل الصورة باستخدام تقنية التعرف الضوئي على الحروف المتقدمة...' : 'Analyzing image using advanced OCR technology...');
       } else if (primaryFile.type === 'application/pdf') {
-        setAnalysisProgress(language === 'ar' ? 'استخراج النص من PDF (قد يتطلب OCR للمستندات الممسوحة ضوئياً)...' : 'Extracting text from PDF (may require OCR for scanned documents)...');
+        setProcessingMethod('Enhanced PDF');
+        setAnalysisProgress(language === 'ar' ? 'معالجة PDF متقدمة (استخراج نص + OCR للمستندات الممسوحة ضوئياً)...' : 'Advanced PDF processing (text extraction + OCR for scanned documents)...');
       } else {
-        setAnalysisProgress(language === 'ar' ? 'تحليل الوثيقة بواسطة الوكلاء الذكيين...' : 'Analyzing document with smart agents...');
+        setProcessingMethod('Text Extraction');
+        setAnalysisProgress(language === 'ar' ? 'استخراج النص المتقدم...' : 'Advanced text extraction...');
       }
 
-      console.log(`Starting analysis for criteria ${criteriaId} with file:`, primaryFile.name);
+      console.log(`🚀 Starting enhanced analysis for criteria ${criteriaId} with file:`, primaryFile.name);
       
       const result = await langchainService.analyzeCriteria(primaryFile, criteriaId, language);
       
-      console.log(`Analysis completed for criteria ${criteriaId}:`, result);
+      console.log(`✅ Enhanced analysis completed for criteria ${criteriaId}:`, result);
       
       const analysis: CriteriaAnalysis = {
         score: result.score,
@@ -141,22 +141,27 @@ export default function CriteriaUploadBox({
 
       setAnalysis(analysis);
       onAnalysisComplete(criteriaId, analysis);
-      setAnalysisProgress(language === 'ar' ? 'اكتمل التحليل بنجاح!' : 'Analysis completed successfully!');
+      setAnalysisProgress(language === 'ar' ? 'اكتمل التحليل المتقدم بنجاح!' : 'Advanced analysis completed successfully!');
 
     } catch (error) {
-      console.error('Analysis error:', error);
+      console.error('Enhanced analysis error:', error);
       const errorMessage = error instanceof Error ? error.message : 
         (language === 'ar' 
-          ? 'حدث خطأ أثناء تحليل الملفات'
-          : 'An error occurred while analyzing the files');
+          ? 'حدث خطأ أثناء التحليل المتقدم للملفات'
+          : 'An error occurred during advanced file analysis');
       
       setError(errorMessage);
       setAnalysisProgress('');
       
+      // Provide specific error guidance
       if (errorMessage.includes('OCR')) {
         setError(language === 'ar' 
-          ? 'فشل في تحليل الصورة بتقنية OCR. يرجى التأكد من وضوح النص في الصورة.'
-          : 'OCR analysis failed. Please ensure the text in the image is clear and readable.');
+          ? 'فشل في تحليل الصورة بتقنية OCR المتقدمة. يرجى التأكد من وضوح النص في الصورة وجودة الدقة.'
+          : 'Advanced OCR analysis failed. Please ensure the text in the image is clear and high resolution.');
+      } else if (errorMessage.includes('PDF')) {
+        setError(language === 'ar' 
+          ? 'فشل في معالجة PDF المتقدمة. قد يكون الملف محمي بكلمة مرور أو تالف أو يحتوي على صور فقط.'
+          : 'Advanced PDF processing failed. The file may be password-protected, corrupted, or contain only images.');
       } else if (errorMessage.includes('API key')) {
         setError(language === 'ar' 
           ? 'مفتاح OpenAI API غير صحيح أو غير موجود. يرجى التحقق من الإعدادات.'
@@ -164,8 +169,7 @@ export default function CriteriaUploadBox({
       }
     } finally {
       setIsAnalyzing(false);
-      setIsUsingOCR(false);
-      setOcrProgress(0);
+      setProcessingMethod('');
     }
   };
 
@@ -177,6 +181,7 @@ export default function CriteriaUploadBox({
       setAnalysis(null);
       setError('');
       setAnalysisProgress('');
+      setProcessingMethod('');
     } else {
       analyzeFiles(newFiles);
     }
@@ -221,8 +226,21 @@ export default function CriteriaUploadBox({
   const getFileTypeIcon = (file: File) => {
     if (file.type.startsWith('image/')) {
       return <Eye className="w-5 h-5 text-purple-600" />;
+    } else if (file.type === 'application/pdf') {
+      return <Zap className="w-5 h-5 text-red-600" />;
     }
     return <File className="w-5 h-5 text-blue-600" />;
+  };
+
+  const getProcessingMethodIcon = () => {
+    switch (processingMethod) {
+      case 'OCR':
+        return <Eye className="w-4 h-4 text-purple-600" />;
+      case 'Enhanced PDF':
+        return <Zap className="w-4 h-4 text-red-600" />;
+      default:
+        return <FileText className="w-4 h-4 text-blue-600" />;
+    }
   };
 
   return (
@@ -275,10 +293,15 @@ export default function CriteriaUploadBox({
               ? 'ملفات PDF أو DOCX أو TXT أو صور (حد أقصى 10 ميجابايت لكل ملف)'
               : 'PDF, DOCX, TXT, or image files (Max 10MB each)'}
           </p>
-          <p className="text-xs text-blue-600 mb-3">
+          <p className="text-xs text-blue-600 mb-2">
             {language === 'ar' 
-              ? 'يدعم الوثائق العربية والإنجليزية + تقنية OCR للصور والمستندات الممسوحة ضوئياً'
-              : 'Supports Arabic and English documents + OCR for images and scanned documents'}
+              ? '🚀 معالجة متقدمة للوثائق العربية'
+              : '🚀 Advanced Arabic document processing'}
+          </p>
+          <p className="text-xs text-green-600 mb-3">
+            {language === 'ar' 
+              ? '✨ استخراج نص ذكي + OCR متقدم + تحليل هجين'
+              : '✨ Smart text extraction + Advanced OCR + Hybrid analysis'}
           </p>
           <input
             type="file"
@@ -311,7 +334,12 @@ export default function CriteriaUploadBox({
                     {formatFileSize(file.size)}
                     {file.type.startsWith('image/') && (
                       <span className="ml-2 text-purple-600">
-                        {language === 'ar' ? '(صورة - سيتم استخدام OCR)' : '(Image - OCR will be used)'}
+                        {language === 'ar' ? '(صورة - OCR متقدم)' : '(Image - Advanced OCR)'}
+                      </span>
+                    )}
+                    {file.type === 'application/pdf' && (
+                      <span className="ml-2 text-red-600">
+                        {language === 'ar' ? '(PDF - معالجة هجينة)' : '(PDF - Hybrid processing)'}
                       </span>
                     )}
                   </p>
@@ -353,25 +381,17 @@ export default function CriteriaUploadBox({
         <div className={`mt-4 p-3 bg-blue-50 rounded-lg flex items-center space-x-2 ${language === 'ar' ? 'space-x-reverse' : ''}`}>
           <div className="flex items-center space-x-2">
             <Loader className="w-5 h-5 text-blue-600 animate-spin" />
-            {isUsingOCR && <Eye className="w-4 h-4 text-purple-600" />}
+            {getProcessingMethodIcon()}
             <Users className="w-4 h-4 text-purple-600" />
           </div>
           <div className="flex-1">
             <span className="text-blue-700 text-sm font-medium">
-              {isUsingOCR 
-                ? (language === 'ar' ? 'تحليل OCR + وكلاء ذكيين' : 'OCR Analysis + Smart Agents')
-                : (language === 'ar' ? 'تحليل متعدد الوكلاء' : 'Multi-Agent Analysis')
+              {processingMethod 
+                ? (language === 'ar' ? `${processingMethod} + وكلاء ذكيين` : `${processingMethod} + Smart Agents`)
+                : (language === 'ar' ? 'تحليل متقدم متعدد الوكلاء' : 'Advanced Multi-Agent Analysis')
               }
             </span>
             <p className="text-xs text-blue-600 mt-1">{analysisProgress}</p>
-            {isUsingOCR && ocrProgress > 0 && (
-              <div className="w-full bg-blue-200 rounded-full h-1 mt-1">
-                <div 
-                  className="bg-blue-600 h-1 rounded-full transition-all duration-300"
-                  style={{ width: `${ocrProgress * 100}%` }}
-                ></div>
-              </div>
-            )}
           </div>
         </div>
       )}
@@ -379,25 +399,22 @@ export default function CriteriaUploadBox({
       {/* Analysis Results */}
       {analysis && !isAnalyzing && (
         <div className="mt-4 space-y-3">
-          {/* Multi-Agent Badge */}
+          {/* Enhanced Processing Badge */}
           <div className={`flex items-center space-x-2 ${language === 'ar' ? 'space-x-reverse' : ''}`}>
+            <Zap className="w-4 h-4 text-orange-500" />
+            <span className="text-xs text-orange-600 font-medium">
+              {language === 'ar' ? 'معالجة متقدمة' : 'Enhanced Processing'}
+            </span>
             <Users className="w-4 h-4 text-purple-500" />
             <span className="text-xs text-purple-600 font-medium">
-              {language === 'ar' ? 'تحليل بواسطة الوكلاء الذكيين' : 'Multi-Agent Analysis'}
+              {language === 'ar' ? 'وكلاء ذكيين' : 'Smart Agents'}
             </span>
-            {uploadedFiles.some(f => f.type.startsWith('image/')) && (
-              <>
-                <span className="text-xs text-gray-400">+</span>
-                <Eye className="w-4 h-4 text-purple-500" />
-                <span className="text-xs text-purple-600 font-medium">OCR</span>
-              </>
-            )}
           </div>
 
           {/* Confidence Score */}
           <div className={`flex items-center justify-between ${language === 'ar' ? 'flex-row-reverse' : ''}`}>
             <span className="text-sm text-gray-600">
-              {language === 'ar' ? 'ثقة النظام:' : 'System Confidence:'}
+              {language === 'ar' ? 'ثقة النظام المتقدم:' : 'Advanced System Confidence:'}
             </span>
             <div className={`flex items-center space-x-1 ${language === 'ar' ? 'space-x-reverse' : ''}`}>
               <Brain className="w-4 h-4 text-purple-500" />
@@ -410,7 +427,7 @@ export default function CriteriaUploadBox({
             <div>
               <h4 className={`text-sm font-medium text-gray-700 mb-1 flex items-center ${language === 'ar' ? 'text-right flex-row-reverse' : 'text-left'}`}>
                 <FileText className={`w-4 h-4 ${language === 'ar' ? 'ml-1' : 'mr-1'}`} />
-                {language === 'ar' ? 'المحتوى الموجود في الوثيقة:' : 'Content Found in Document:'}
+                {language === 'ar' ? 'المحتوى المستخرج من الوثيقة:' : 'Content Extracted from Document:'}
               </h4>
               <div className={`bg-gray-100 border-l-4 border-blue-400 p-3 rounded text-sm text-gray-700 ${language === 'ar' ? 'border-l-0 border-r-4 text-right' : 'text-left'}`}>
                 {analysis.documentContent}
@@ -418,10 +435,10 @@ export default function CriteriaUploadBox({
             </div>
           )}
 
-          {/* Findings */}
+          {/* Enhanced Findings */}
           <div>
             <h4 className={`text-sm font-medium text-gray-700 mb-1 ${language === 'ar' ? 'text-right' : 'text-left'}`}>
-              {language === 'ar' ? 'نتائج التحليل:' : 'Analysis Results:'}
+              {language === 'ar' ? 'نتائج التحليل المتقدم:' : 'Advanced Analysis Results:'}
             </h4>
             <p className={`text-sm text-gray-600 ${language === 'ar' ? 'text-right leading-relaxed' : 'text-left'}`}>
               {analysis.findings}
@@ -432,7 +449,7 @@ export default function CriteriaUploadBox({
           {analysis.evidence && analysis.evidence.length > 0 && (
             <div>
               <h4 className={`text-sm font-medium text-gray-700 mb-1 ${language === 'ar' ? 'text-right' : 'text-left'}`}>
-                {language === 'ar' ? 'الأدلة:' : 'Evidence:'}
+                {language === 'ar' ? 'الأدلة المستخرجة:' : 'Extracted Evidence:'}
               </h4>
               <div className="space-y-1">
                 {analysis.evidence.slice(0, 2).map((evidence, index) => (
