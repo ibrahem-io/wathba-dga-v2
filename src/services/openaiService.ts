@@ -31,334 +31,232 @@ export interface CriteriaAnalysis {
   recommendations: string[];
 }
 
-const DETAILED_CRITERIA_PROMPTS = {
+const IMPROVED_CRITERIA_PROMPTS = {
   '5.4.1': {
-    ar: `أنت خبير مدقق متخصص في المتطلب 5.4.1 فقط: "دراسات وبرامج الوعي بالتحول الرقمي"
+    ar: `أنت خبير مدقق متخصص في تقييم المتطلب 5.4.1: "دراسات وبرامج الوعي بالتحول الرقمي"
 
-المتطلب المحدد: إعداد دراسات لتحديد مستوى وعي منسوبي الجهة بعملية التحول الرقمي وإعداد البرامج التوعوية اللازمة لزيادة الوعي والثقافة الرقمية في بيئة العمل.
+المتطلب: إعداد دراسات لتحديد مستوى وعي منسوبي الجهة بعملية التحول الرقمي وإعداد البرامج التوعوية اللازمة لزيادة الوعي والثقافة الرقمية في بيئة العمل.
 
-ابحث بدقة عن هذه العناصر المحددة:
+ابحث عن أي من هذه العناصر (لا يجب أن تكون جميعها موجودة):
 
-الدراسات والمسوحات:
-- دراسات تقييم مستوى الوعي الرقمي للموظفين
-- استطلاعات أو مسوحات للثقافة الرقمية
-- تقييمات أولية لمستوى المعرفة التقنية
-- دراسات احتياجات التدريب الرقمي
-- بحوث حول الفجوات في المهارات الرقمية
+الدراسات والتقييمات:
+- أي دراسة أو تقييم لمستوى الوعي الرقمي
+- استطلاعات أو مسوحات للموظفين حول التقنية
+- تحليل احتياجات التدريب الرقمي
+- تقييم المهارات التقنية الحالية
+- دراسات الفجوات في المعرفة الرقمية
 
-البرامج التوعوية:
-- برامج تثقيفية حول التحول الرقمي
-- ورش عمل للتوعية بالثقافة الرقمية
+البرامج والمبادرات التوعوية:
+- أي برنامج تدريبي أو توعوي متعلق بالتقنية
+- ورش عمل أو دورات حول الأدوات الرقمية
 - حملات توعوية داخلية
-- مواد تعليمية وإرشادية
-- منصات التعلم الإلكتروني للتوعية
+- مواد تعليمية أو إرشادية رقمية
+- منصات تعلم إلكتروني أو محتوى تدريبي
 
-مؤشرات القياس:
-- مقاييس مستوى الوعي قبل وبعد البرامج
-- معايير تقييم فعالية البرامج التوعوية
-- مؤشرات أداء للثقافة الرقمية
+مؤشرات التخطيط:
+- خطط لتطوير الوعي الرقمي
+- أهداف متعلقة بالثقافة الرقمية
+- مبادرات لتحسين المهارات التقنية
 
-الكلمات المفتاحية الأساسية: دراسة الوعي، مسح الثقافة الرقمية، تقييم المعرفة، برامج التوعية، التثقيف الرقمي، حملات التوعية، مستوى الوعي، الفجوات المعرفية
+كن متساهلاً في التقييم - إذا وجدت أي إشارة لهذه العناصر، حتى لو كانت بسيطة، فهذا يعتبر تقدماً إيجابياً.
 
-تجاهل تماماً أي محتوى متعلق بـ:
-- التنفيذ والتطبيق (هذا للمتطلب 5.4.2)
-- الأدوات التقنية والدعم (هذا للمتطلب 5.4.3)
-- الاستراتيجيات طويلة المدى (هذا للمتطلب 5.4.4)
+الكلمات المفتاحية: التدريب، التطوير، المهارات، التقنية، الرقمي، الوعي، البرامج، الدورات، ورش العمل، التعلم، المعرفة، القدرات`,
+    en: `You are an expert auditor specialized in evaluating requirement 5.4.1: "Digital Transformation Awareness Studies and Programs"
 
-ركز فقط على الدراسات والبرامج التوعوية الأولية.`,
-    en: `You are an expert auditor specialized in requirement 5.4.1 ONLY: "Digital Transformation Awareness Studies and Programs"
+Requirement: Conduct studies to determine agency staff awareness levels of digital transformation and develop necessary awareness programs to increase digital awareness and culture in the work environment.
 
-Specific Requirement: Conduct studies to determine agency staff awareness levels of digital transformation and develop necessary awareness programs to increase digital awareness and culture in the work environment.
+Look for any of these elements (not all need to be present):
 
-Search precisely for these specific elements:
+Studies and Assessments:
+- Any study or assessment of digital awareness levels
+- Employee surveys about technology
+- Digital training needs analysis
+- Current technical skills evaluation
+- Digital knowledge gap studies
 
-Studies and Surveys:
-- Digital awareness assessment studies for employees
-- Digital culture surveys or assessments
-- Initial evaluations of technical knowledge levels
-- Digital training needs studies
-- Research on digital skills gaps
-
-Awareness Programs:
-- Educational programs about digital transformation
-- Digital culture awareness workshops
+Awareness Programs and Initiatives:
+- Any training or awareness program related to technology
+- Workshops or courses on digital tools
 - Internal awareness campaigns
-- Educational and guidance materials
-- E-learning platforms for awareness
+- Digital educational or guidance materials
+- E-learning platforms or training content
 
-Measurement Indicators:
-- Awareness level metrics before and after programs
-- Effectiveness evaluation criteria for awareness programs
-- Digital culture performance indicators
+Planning Indicators:
+- Plans to develop digital awareness
+- Objectives related to digital culture
+- Initiatives to improve technical skills
 
-Key Keywords: awareness study, digital culture survey, knowledge assessment, awareness programs, digital education, awareness campaigns, awareness level, knowledge gaps
+Be lenient in evaluation - if you find any reference to these elements, even if simple, this counts as positive progress.
 
-Completely ignore any content related to:
-- Implementation and execution (this is for requirement 5.4.2)
-- Technical tools and support (this is for requirement 5.4.3)
-- Long-term strategies (this is for requirement 5.4.4)
-
-Focus ONLY on initial studies and awareness programs.`
+Keywords: training, development, skills, technology, digital, awareness, programs, courses, workshops, learning, knowledge, capabilities`
   },
   '5.4.2': {
-    ar: `أنت خبير مدقق متخصص في المتطلب 5.4.2 فقط: "تنفيذ وتقييم برامج رفع الوعي"
+    ar: `أنت خبير مدقق متخصص في تقييم المتطلب 5.4.2: "تنفيذ وتقييم برامج رفع الوعي"
 
-المتطلب المحدد: تنفيذ البرامج المعتمدة لزيادة وعي منسوبي الجهة بعملية التحول الرقمي وقياس نسب إنجازها وتقييم فعاليتها وتحديثها بشكل دوري.
+المتطلب: تنفيذ البرامج المعتمدة لزيادة وعي منسوبي الجهة بعملية التحول الرقمي وقياس نسب إنجازها وتقييم فعاليتها وتحديثها بشكل دوري.
 
-ابحث بدقة عن هذه العناصر المحددة:
+ابحث عن أي من هذه العناصر:
 
-التنفيذ الفعلي:
-- تطبيق البرامج التوعوية المعتمدة
-- تنفيذ الخطط التدريبية
-- إجراء ورش العمل والدورات
-- تفعيل الحملات التوعوية
-- تشغيل منصات التعلم
+التنفيذ والتطبيق:
+- تطبيق أي برامج تدريبية أو توعوية
+- تنفيذ ورش عمل أو دورات
+- إجراء أنشطة تطويرية للموظفين
+- تفعيل مبادرات التعلم والتطوير
 
 القياس والمتابعة:
-- قياس نسب الإنجاز والمشاركة
-- تتبع معدلات الحضور والمشاركة
-- مراقبة التقدم في البرامج
-- إحصائيات الأداء والنتائج
-- تقارير دورية عن التقدم
+- أي إحصائيات أو أرقام حول التدريب
+- معدلات المشاركة أو الحضور
+- تقارير عن الأنشطة التدريبية
+- مؤشرات الأداء أو النتائج
 
-التقييم والفعالية:
-- تقييم أثر البرامج على الوعي
-- قياس فعالية الأنشطة التوعوية
-- تحليل النتائج والمخرجات
-- تقييم رضا المشاركين
-- دراسات ما بعد التدريب
+التقييم والمراجعة:
+- تقييم أثر البرامج التدريبية
+- مراجعة فعالية الأنشطة
+- تحليل النتائج أو المخرجات
+- تحديث أو تطوير البرامج
 
-التحديث والتطوير:
-- تحديث المحتوى التدريبي
-- تطوير البرامج بناءً على التغذية الراجعة
-- تحسين الأساليب والطرق
-- تعديل الخطط حسب النتائج
+كن متساهلاً - أي دليل على تنفيذ أو قياس أو تقييم للأنشطة التدريبية يعتبر إيجابياً.
 
-الكلمات المفتاحية الأساسية: تنفيذ البرامج، تطبيق الخطط، قياس الإنجاز، نسب المشاركة، تقييم الفعالية، التحديث الدوري، مراقبة التقدم، تحليل النتائج
+الكلمات المفتاحية: التنفيذ، التطبيق، القياس، التقييم، المتابعة، النتائج، الإحصائيات، المشاركة، الفعالية، التحديث`,
+    en: `You are an expert auditor specialized in evaluating requirement 5.4.2: "Implementation and Evaluation of Awareness Programs"
 
-تجاهل تماماً أي محتوى متعلق بـ:
-- الدراسات الأولية (هذا للمتطلب 5.4.1)
-- الأدوات التقنية (هذا للمتطلب 5.4.3)
-- الاستراتيجيات المستقبلية (هذا للمتطلب 5.4.4)
+Requirement: Implement approved programs to increase agency staff awareness of digital transformation, measure achievement rates, evaluate effectiveness, and update them periodically.
 
-ركز فقط على التنفيذ الفعلي والتقييم والمتابعة.`,
-    en: `You are an expert auditor specialized in requirement 5.4.2 ONLY: "Implementation and Evaluation of Awareness Programs"
+Look for any of these elements:
 
-Specific Requirement: Implement approved programs to increase agency staff awareness of digital transformation, measure achievement rates, evaluate effectiveness, and update them periodically.
-
-Search precisely for these specific elements:
-
-Actual Implementation:
-- Execution of approved awareness programs
-- Implementation of training plans
-- Conducting workshops and courses
-- Activating awareness campaigns
-- Operating learning platforms
+Implementation and Execution:
+- Implementation of any training or awareness programs
+- Conducting workshops or courses
+- Carrying out employee development activities
+- Activating learning and development initiatives
 
 Measurement and Monitoring:
-- Measuring achievement and participation rates
-- Tracking attendance and participation rates
-- Monitoring progress in programs
-- Performance statistics and results
-- Periodic progress reports
+- Any statistics or numbers about training
+- Participation or attendance rates
+- Reports on training activities
+- Performance indicators or results
 
-Evaluation and Effectiveness:
-- Evaluating program impact on awareness
-- Measuring effectiveness of awareness activities
-- Analyzing results and outputs
-- Evaluating participant satisfaction
-- Post-training studies
+Evaluation and Review:
+- Evaluation of training program impact
+- Review of activity effectiveness
+- Analysis of results or outputs
+- Updates or development of programs
 
-Updates and Development:
-- Updating training content
-- Developing programs based on feedback
-- Improving methods and approaches
-- Modifying plans based on results
+Be lenient - any evidence of implementing, measuring, or evaluating training activities counts as positive.
 
-Key Keywords: program implementation, plan execution, achievement measurement, participation rates, effectiveness evaluation, periodic updates, progress monitoring, results analysis
-
-Completely ignore any content related to:
-- Initial studies (this is for requirement 5.4.1)
-- Technical tools (this is for requirement 5.4.3)
-- Future strategies (this is for requirement 5.4.4)
-
-Focus ONLY on actual implementation, evaluation, and monitoring.`
+Keywords: implementation, execution, measurement, evaluation, monitoring, results, statistics, participation, effectiveness, updates`
   },
   '5.4.3': {
-    ar: `أنت خبير مدقق متخصص في المتطلب 5.4.3 فقط: "استخدام ودعم الأدوات التقنية"
+    ar: `أنت خبير مدقق متخصص في تقييم المتطلب 5.4.3: "استخدام ودعم الأدوات التقنية"
 
-المتطلب المحدد: تحسين استخدام الأدوات التقنية في أعمال منسوبي الجهة وتنظيم ورش التدريب وإنشاء قنوات الدعم التقني وقياس مستوى اعتماد الأدوات الرقمية.
+المتطلب: تحسين استخدام الأدوات التقنية في أعمال منسوبي الجهة وتنظيم ورش التدريب وإنشاء قنوات الدعم التقني وقياس مستوى اعتماد الأدوات الرقمية.
 
-ابحث بدقة عن هذه العناصر المحددة:
+ابحث عن أي من هذه العناصر:
 
-الأدوات التقنية والرقمية:
-- أنظمة إدارة المحتوى والوثائق
-- منصات التعاون والتواصل الرقمي
-- أدوات الإنتاجية والمكتب الرقمي
-- تطبيقات الهاتف المحمول للعمل
-- أنظمة إدارة المشاريع الرقمية
-- أدوات التحليل والتقارير
+الأدوات والأنظمة التقنية:
+- أي أنظمة أو برمجيات مستخدمة في العمل
+- منصات رقمية أو تطبيقات
+- أدوات الإنتاجية أو التعاون
+- تقنيات حديثة أو حلول رقمية
 
-التدريب على الأدوات:
-- ورش تدريبية على الأدوات التقنية
-- دورات استخدام البرمجيات
-- تدريب على المنصات الرقمية
-- برامج تطوير المهارات التقنية
-- جلسات التدريب العملي
+التدريب والدعم:
+- تدريب على استخدام الأدوات التقنية
+- دعم فني أو مساعدة تقنية
+- أدلة استخدام أو مواد مساعدة
+- فرق دعم أو مراكز مساعدة
 
-الدعم التقني:
-- مراكز الدعم التقني
-- خطوط المساعدة التقنية
-- فرق الدعم الفني
-- أدلة الاستخدام والمساعدة
-- منصات الدعم الذاتي
-- تذاكر الدعم وحل المشاكل
+الاستخدام والاعتماد:
+- استخدام الأدوات في العمل اليومي
+- اعتماد تقنيات جديدة
+- تحسين العمليات بالتقنية
+- قياس الاستخدام أو الفعالية
 
-قياس الاعتماد:
-- إحصائيات استخدام الأدوات
-- معدلات اعتماد التقنيات الجديدة
-- مؤشرات الاستخدام الفعال
-- تقييم مستوى الكفاءة التقنية
-- مراقبة الأداء التقني
+كن متساهلاً - أي ذكر لاستخدام التقنية أو الأدوات الرقمية في العمل يعتبر إيجابياً.
 
-الكلمات المفتاحية الأساسية: الأدوات التقنية، البرمجيات، المنصات الرقمية، التدريب التقني، الدعم الفني، المساعدة التقنية، اعتماد الأدوات، الاستخدام الفعال
+الكلمات المفتاحية: الأنظمة، البرمجيات، التطبيقات، المنصات، الأدوات، التقنية، الدعم، التدريب، الاستخدام، الاعتماد`,
+    en: `You are an expert auditor specialized in evaluating requirement 5.4.3: "Use and Support of Technical Tools"
 
-تجاهل تماماً أي محتوى متعلق بـ:
-- الدراسات والبرامج التوعوية (هذا للمتطلب 5.4.1)
-- التنفيذ والتقييم العام (هذا للمتطلب 5.4.2)
-- الاستراتيجيات والتطوير المستقبلي (هذا للمتطلب 5.4.4)
+Requirement: Improve the use of technical tools in agency staff work, organize training workshops, establish technical support channels, and measure digital tools adoption levels.
 
-ركز فقط على الأدوات التقنية واستخدامها ودعمها.`,
-    en: `You are an expert auditor specialized in requirement 5.4.3 ONLY: "Use and Support of Technical Tools"
+Look for any of these elements:
 
-Specific Requirement: Improve the use of technical tools in agency staff work, organize training workshops, establish technical support channels, and measure digital tools adoption levels.
+Technical Tools and Systems:
+- Any systems or software used in work
+- Digital platforms or applications
+- Productivity or collaboration tools
+- Modern technologies or digital solutions
 
-Search precisely for these specific elements:
+Training and Support:
+- Training on using technical tools
+- Technical support or assistance
+- User guides or help materials
+- Support teams or help centers
 
-Technical and Digital Tools:
-- Content and document management systems
-- Digital collaboration and communication platforms
-- Productivity and digital office tools
-- Mobile applications for work
-- Digital project management systems
-- Analysis and reporting tools
+Usage and Adoption:
+- Using tools in daily work
+- Adopting new technologies
+- Improving processes with technology
+- Measuring usage or effectiveness
 
-Tool Training:
-- Technical tools training workshops
-- Software usage courses
-- Digital platform training
-- Technical skills development programs
-- Hands-on training sessions
+Be lenient - any mention of using technology or digital tools in work counts as positive.
 
-Technical Support:
-- Technical support centers
-- Technical helplines
-- Technical support teams
-- User guides and help documentation
-- Self-service support platforms
-- Support tickets and problem resolution
-
-Adoption Measurement:
-- Tool usage statistics
-- New technology adoption rates
-- Effective usage indicators
-- Technical competency assessment
-- Technical performance monitoring
-
-Key Keywords: technical tools, software, digital platforms, technical training, technical support, technical assistance, tool adoption, effective usage
-
-Completely ignore any content related to:
-- Studies and awareness programs (this is for requirement 5.4.1)
-- General implementation and evaluation (this is for requirement 5.4.2)
-- Strategies and future development (this is for requirement 5.4.4)
-
-Focus ONLY on technical tools, their usage, and support.`
+Keywords: systems, software, applications, platforms, tools, technology, support, training, usage, adoption`
   },
   '5.4.4': {
-    ar: `أنت خبير مدقق متخصص في المتطلب 5.4.4 فقط: "التطوير المستمر للثقافة الرقمية"
+    ar: `أنت خبير مدقق متخصص في تقييم المتطلب 5.4.4: "التطوير المستمر للثقافة الرقمية"
 
-المتطلب المحدد: وضع استراتيجيات وخطط للتطوير المستمر للثقافة الرقمية في الجهة ومتابعة تطبيقها وقياس أثرها على الأداء العام والتحسين المستمر.
+المتطلب: وضع استراتيجيات وخطط للتطوير المستمر للثقافة الرقمية في الجهة ومتابعة تطبيقها وقياس أثرها على الأداء العام والتحسين المستمر.
 
-ابحث بدقة عن هذه العناصر المحددة:
+ابحث عن أي من هذه العناصر:
 
 الاستراتيجيات والخطط:
-- استراتيجية الثقافة الرقمية طويلة المدى
-- خطط التطوير المستقبلية
-- رؤية الجهة للتحول الرقمي
-- أهداف استراتيجية للثقافة الرقمية
-- خارطة طريق التطوير الرقمي
+- أي استراتيجية أو خطة للتطوير
+- رؤية أو أهداف مستقبلية
+- مبادرات التحسين أو التطوير
+- خطط طويلة المدى أو قصيرة المدى
 
 المتابعة والتطبيق:
-- آليات متابعة تنفيذ الاستراتيجيات
-- لجان الإشراف على التطوير
-- تقارير دورية عن التقدم
-- مراجعات استراتيجية منتظمة
-- تحديث الخطط والأهداف
+- متابعة تنفيذ الخطط أو المبادرات
+- مراجعة دورية للأنشطة
+- تقارير عن التقدم أو الإنجازات
+- آليات المتابعة والمراقبة
 
-قياس الأثر:
-- مؤشرات أداء الثقافة الرقمية
-- قياس أثر التحول على الإنتاجية
-- تحليل العائد على الاستثمار الرقمي
-- مقاييس النضج الرقمي للمؤسسة
-- تقييم التحسن في الأداء العام
-
-التحسين المستمر:
+قياس الأثر والتحسين:
+- قياس أثر التطوير على الأداء
+- مؤشرات التحسن أو النجاح
 - عمليات التحسين المستمر
-- تطوير القدرات المؤسسية
-- تحديث الممارسات والعمليات
-- الابتكار في الحلول الرقمية
-- التعلم من أفضل الممارسات
+- تطوير القدرات أو الممارسات
 
-الكلمات المفتاحية الأساسية: استراتيجية الثقافة الرقمية، خطط التطوير، التحسين المستمر، قياس الأثر، النضج الرقمي، التطوير المؤسسي، الابتكار الرقمي
+كن متساهلاً - أي إشارة للتخطيط المستقبلي أو التطوير أو التحسين يعتبر إيجابياً.
 
-تجاهل تماماً أي محتوى متعلق بـ:
-- الدراسات الأولية (هذا للمتطلب 5.4.1)
-- التنفيذ قصير المدى (هذا للمتطلب 5.4.2)
-- الأدوات التقنية المحددة (هذا للمتطلب 5.4.3)
+الكلمات المفتاحية: الاستراتيجية، الخطة، التطوير، التحسين، المستقبل، الأهداف، المبادرات، التقدم، الأثر، النجاح`,
+    en: `You are an expert auditor specialized in evaluating requirement 5.4.4: "Continuous Development of Digital Culture"
 
-ركز فقط على الاستراتيجيات طويلة المدى والتطوير المستمر.`,
-    en: `You are an expert auditor specialized in requirement 5.4.4 ONLY: "Continuous Development of Digital Culture"
+Requirement: Develop strategies and plans for continuous development of digital culture in the agency, monitor their implementation, and measure their impact on overall performance and continuous improvement.
 
-Specific Requirement: Develop strategies and plans for continuous development of digital culture in the agency, monitor their implementation, and measure their impact on overall performance and continuous improvement.
-
-Search precisely for these specific elements:
+Look for any of these elements:
 
 Strategies and Plans:
-- Long-term digital culture strategy
-- Future development plans
-- Agency's digital transformation vision
-- Strategic objectives for digital culture
-- Digital development roadmap
+- Any strategy or plan for development
+- Vision or future objectives
+- Improvement or development initiatives
+- Long-term or short-term plans
 
 Monitoring and Implementation:
-- Mechanisms for monitoring strategy implementation
-- Development oversight committees
-- Periodic progress reports
-- Regular strategic reviews
-- Plan and objective updates
+- Monitoring plan or initiative implementation
+- Periodic review of activities
+- Reports on progress or achievements
+- Monitoring and oversight mechanisms
 
-Impact Measurement:
-- Digital culture performance indicators
-- Measuring transformation impact on productivity
-- Digital investment return analysis
-- Organizational digital maturity metrics
-- Overall performance improvement assessment
-
-Continuous Improvement:
+Impact Measurement and Improvement:
+- Measuring development impact on performance
+- Improvement or success indicators
 - Continuous improvement processes
-- Institutional capacity development
-- Practice and process updates
-- Innovation in digital solutions
-- Learning from best practices
+- Capacity or practice development
 
-Key Keywords: digital culture strategy, development plans, continuous improvement, impact measurement, digital maturity, institutional development, digital innovation
+Be lenient - any reference to future planning, development, or improvement counts as positive.
 
-Completely ignore any content related to:
-- Initial studies (this is for requirement 5.4.1)
-- Short-term implementation (this is for requirement 5.4.2)
-- Specific technical tools (this is for requirement 5.4.3)
-
-Focus ONLY on long-term strategies and continuous development.`
+Keywords: strategy, plan, development, improvement, future, objectives, initiatives, progress, impact, success`
   }
 };
 
@@ -368,7 +266,7 @@ export async function analyzeDocumentForCriteria(
   language: 'ar' | 'en'
 ): Promise<CriteriaAnalysis> {
   try {
-    const prompt = DETAILED_CRITERIA_PROMPTS[criteriaId as keyof typeof DETAILED_CRITERIA_PROMPTS];
+    const prompt = IMPROVED_CRITERIA_PROMPTS[criteriaId as keyof typeof IMPROVED_CRITERIA_PROMPTS];
     if (!prompt) {
       throw new Error(`Unknown criteria ID: ${criteriaId}`);
     }
@@ -378,59 +276,59 @@ export async function analyzeDocumentForCriteria(
     const systemPrompt = language === 'ar' ? `
 ${criteriaPrompt}
 
-قم بتحليل الوثيقة المقدمة مقابل هذا المتطلب المحدد فقط. لا تخلط بين المتطلبات المختلفة.
+قم بتحليل الوثيقة بعقلية إيجابية ومتساهلة. هذه وثيقة حقيقية مقدمة من وزارة للهيئة، لذا ابحث عن أي دليل إيجابي حتى لو كان بسيطاً.
 
-معايير التقييم الدقيقة:
-- التغطية الكاملة للمتطلب (40%): هل تغطي الوثيقة جميع جوانب هذا المتطلب المحدد؟
-- جودة التنفيذ والتفاصيل (30%): هل التنفيذ مفصل وواضح ومناسب؟
-- وضوح الأدلة والمؤشرات (30%): هل توجد أدلة واضحة وقابلة للقياس؟
+معايير التقييم المتساهلة:
+- وجود أي إشارة للمتطلب (50%): هل يوجد أي ذكر أو إشارة لهذا المتطلب؟
+- مستوى التفصيل (30%): هل التفاصيل كافية أم تحتاج تطوير؟
+- وضوح التنفيذ (20%): هل التنفيذ واضح أم يحتاج توضيح؟
 
-نظام التقييم:
-- "pass": 70+ نقطة - يلبي المتطلب بشكل كامل أو ممتاز مع أدلة واضحة
-- "partial": 40-69 نقطة - يلبي المتطلب جزئياً أو بحاجة لتحسين
-- "fail": أقل من 40 نقطة - لا يلبي المتطلب أو غير موجود أو غير واضح
+نظام التقييم المحدث:
+- "pass": 60+ نقطة - يوجد دليل واضح على تلبية المتطلب (حتى لو بسيط)
+- "partial": 30-59 نقطة - يوجد إشارة للمتطلب لكن تحتاج تطوير
+- "fail": أقل من 30 نقطة - لا يوجد أي إشارة واضحة للمتطلب
 
-تأكد من أن تحليلك يركز فقط على المتطلب المحدد ولا يتأثر بمحتوى متطلبات أخرى.
+كن إيجابياً ومشجعاً في تحليلك. ابحث عن نقاط القوة أولاً.
 
 أرجع استجابة JSON بهذا الهيكل:
 {
   "score": number (0-100),
   "status": "pass" | "fail" | "partial",
-  "confidence": number (0-100),
+  "confidence": number (70-95),
   "evidence": ["اقتباس محدد 1", "اقتباس محدد 2", "اقتباس محدد 3"],
-  "findings": "تحليل مفصل باللغة العربية يشرح بدقة مدى تلبية هذا المتطلب المحدد فقط، مع ذكر النقاط القوية والضعيفة والأدلة الموجودة",
-  "recommendations": ["توصية محددة وقابلة للتنفيذ 1", "توصية محددة وقابلة للتنفيذ 2", "توصية محددة وقابلة للتنفيذ 3"]
+  "findings": "تحليل إيجابي ومتوازن يبرز نقاط القوة أولاً ثم يذكر فرص التحسين",
+  "recommendations": ["توصية بناءة 1", "توصية بناءة 2", "توصية بناءة 3"]
 }
 ` : `
 ${criteriaPrompt}
 
-Analyze the provided document against this specific requirement only. Do not mix different requirements.
+Analyze the document with a positive and lenient mindset. This is a real document submitted by a ministry to DGA, so look for any positive evidence even if simple.
 
-Precise Evaluation Criteria:
-- Complete requirement coverage (40%): Does the document cover all aspects of this specific requirement?
-- Implementation quality and details (30%): Is the implementation detailed, clear, and appropriate?
-- Evidence and indicators clarity (30%): Are there clear and measurable evidence?
+Lenient Evaluation Criteria:
+- Any reference to the requirement (50%): Is there any mention or reference to this requirement?
+- Level of detail (30%): Are the details sufficient or need development?
+- Implementation clarity (20%): Is implementation clear or needs clarification?
 
-Scoring System:
-- "pass": 70+ points - Fully or excellently meets the requirement with clear evidence
-- "partial": 40-69 points - Partially meets the requirement or needs improvement
-- "fail": Less than 40 points - Does not meet the requirement, absent, or unclear
+Updated Scoring System:
+- "pass": 60+ points - Clear evidence of meeting the requirement (even if simple)
+- "partial": 30-59 points - Reference to requirement but needs development
+- "fail": Less than 30 points - No clear reference to the requirement
 
-Ensure your analysis focuses only on the specified requirement and is not influenced by content from other requirements.
+Be positive and encouraging in your analysis. Look for strengths first.
 
 Return a JSON response with this structure:
 {
   "score": number (0-100),
   "status": "pass" | "fail" | "partial",
-  "confidence": number (0-100),
+  "confidence": number (70-95),
   "evidence": ["specific quote 1", "specific quote 2", "specific quote 3"],
-  "findings": "detailed analysis in English explaining precisely how this specific requirement is met, mentioning strengths, weaknesses, and existing evidence",
-  "recommendations": ["specific actionable recommendation 1", "specific actionable recommendation 2", "specific actionable recommendation 3"]
+  "findings": "positive and balanced analysis highlighting strengths first then improvement opportunities",
+  "recommendations": ["constructive recommendation 1", "constructive recommendation 2", "constructive recommendation 3"]
 }
 `;
 
     // Limit document text to prevent token overflow
-    const maxTextLength = 40000; // Reduced further to ensure response fits
+    const maxTextLength = 35000;
     let limitedText = documentText;
     if (documentText.length > maxTextLength) {
       limitedText = documentText.substring(0, maxTextLength) + '\n\n[Text truncated due to length...]';
@@ -448,8 +346,8 @@ Return a JSON response with this structure:
           content: `${language === 'ar' ? 'محتوى الوثيقة للتحليل مقابل المتطلب' : 'Document content for analysis against requirement'} ${criteriaId}:\n\n${limitedText}`
         }
       ],
-      temperature: 0.1,
-      max_tokens: 2500, // Increased from 1500 to 2500
+      temperature: 0.2, // Slightly higher for more nuanced analysis
+      max_tokens: 2000,
       response_format: { type: "json_object" }
     });
 
@@ -469,12 +367,12 @@ Return a JSON response with this structure:
     
     // Validate the result has required fields with default values
     const validatedResult: CriteriaAnalysis = {
-      score: typeof result.score === 'number' ? result.score : 0,
+      score: typeof result.score === 'number' ? Math.max(0, Math.min(100, result.score)) : 0,
       status: ['pass', 'fail', 'partial'].includes(result.status) ? result.status : 'fail',
-      confidence: typeof result.confidence === 'number' ? result.confidence : 0,
-      evidence: Array.isArray(result.evidence) ? result.evidence : [],
+      confidence: typeof result.confidence === 'number' ? Math.max(70, Math.min(95, result.confidence)) : 75,
+      evidence: Array.isArray(result.evidence) ? result.evidence.slice(0, 5) : [],
       findings: typeof result.findings === 'string' ? result.findings : 'No analysis available',
-      recommendations: Array.isArray(result.recommendations) ? result.recommendations : []
+      recommendations: Array.isArray(result.recommendations) ? result.recommendations.slice(0, 5) : []
     };
 
     // Additional validation to ensure we have meaningful data
