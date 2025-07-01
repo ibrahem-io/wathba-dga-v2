@@ -1,3 +1,5 @@
+import { ocrService } from './ocrService';
+
 export async function extractTextFromFile(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -7,13 +9,17 @@ export async function extractTextFromFile(file: File): Promise<string> {
         const arrayBuffer = event.target?.result as ArrayBuffer;
         
         if (file.type === 'application/pdf') {
-          const text = await extractTextFromPDF(arrayBuffer);
+          const text = await extractTextFromPDF(arrayBuffer, file);
           resolve(text);
         } else if (file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
           const text = await extractTextFromDOCX(arrayBuffer);
           resolve(text);
         } else if (file.type === 'text/plain') {
           const text = await extractTextFromTXT(arrayBuffer);
+          resolve(text);
+        } else if (file.type.startsWith('image/')) {
+          // Handle image files with OCR
+          const text = await extractTextFromImage(file);
           resolve(text);
         } else {
           reject(new Error('Unsupported file type'));
@@ -28,6 +34,30 @@ export async function extractTextFromFile(file: File): Promise<string> {
   });
 }
 
+async function extractTextFromImage(file: File): Promise<string> {
+  try {
+    console.log(`Starting OCR for image file: ${file.name}`);
+    
+    const result = await ocrService.recognizeFromFile(file, {
+      language: 'auto',
+      onProgress: (progress) => {
+        console.log(`OCR Progress: ${Math.round(progress * 100)}%`);
+      }
+    });
+
+    console.log(`OCR completed for ${file.name}: ${result.text.length} characters extracted with ${result.confidence}% confidence`);
+    
+    if (result.text.length < 10) {
+      throw new Error('OCR extracted insufficient text content');
+    }
+
+    return result.text.substring(0, 50000);
+  } catch (error) {
+    console.error('OCR extraction failed:', error);
+    throw new Error(`OCR failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+}
+
 async function extractTextFromTXT(arrayBuffer: ArrayBuffer): Promise<string> {
   const uint8Array = new Uint8Array(arrayBuffer);
   
@@ -35,7 +65,7 @@ async function extractTextFromTXT(arrayBuffer: ArrayBuffer): Promise<string> {
   try {
     const text = new TextDecoder('utf-8').decode(uint8Array);
     if (text && !text.includes('�')) {
-      return text.trim().substring(0, 50000); // Increased limit
+      return text.trim().substring(0, 50000);
     }
   } catch (error) {
     // Fall through to other encodings
@@ -61,7 +91,37 @@ async function extractTextFromTXT(arrayBuffer: ArrayBuffer): Promise<string> {
   }
 }
 
-async function extractTextFromPDF(arrayBuffer: ArrayBuffer): Promise<string> {
+async function extractTextFromPDF(arrayBuffer: ArrayBuffer, file: File): Promise<string> {
+  // First try traditional PDF text extraction
+  let extractedText = await extractPDFText(arrayBuffer);
+  
+  // If traditional extraction yields insufficient text, try OCR
+  if (extractedText.length < 100) {
+    console.log(`PDF text extraction yielded only ${extractedText.length} characters. Attempting OCR...`);
+    
+    try {
+      const ocrResult = await ocrService.recognizeFromPDF(arrayBuffer, {
+        language: 'auto',
+        maxPages: 5, // Limit to first 5 pages for performance
+        onProgress: (progress) => {
+          console.log(`PDF OCR Progress: ${Math.round(progress * 100)}%`);
+        }
+      });
+
+      if (ocrResult.text.length > extractedText.length) {
+        console.log(`OCR extracted ${ocrResult.text.length} characters vs ${extractedText.length} from traditional extraction`);
+        extractedText = ocrResult.text;
+      }
+    } catch (ocrError) {
+      console.warn('PDF OCR failed, using traditional extraction result:', ocrError);
+      // Continue with traditional extraction result
+    }
+  }
+  
+  return extractedText.substring(0, 50000);
+}
+
+async function extractPDFText(arrayBuffer: ArrayBuffer): Promise<string> {
   // Enhanced PDF text extraction
   const uint8Array = new Uint8Array(arrayBuffer);
   const text = new TextDecoder('utf-8', { fatal: false }).decode(uint8Array);
@@ -134,10 +194,9 @@ async function extractTextFromPDF(arrayBuffer: ArrayBuffer): Promise<string> {
     .replace(/[^\x20-\x7E\u0600-\u06FF\u0750-\u077F\u0590-\u05FF]/g, ' ')
     .trim();
   
-  console.log(`PDF extraction result: ${extractedText.length} characters extracted`);
+  console.log(`PDF traditional extraction result: ${extractedText.length} characters extracted`);
   
-  // Return up to 50k characters
-  return extractedText.substring(0, 50000);
+  return extractedText;
 }
 
 async function extractTextFromDOCX(arrayBuffer: ArrayBuffer): Promise<string> {
@@ -155,10 +214,10 @@ async function extractTextFromDOCX(arrayBuffer: ArrayBuffer): Promise<string> {
       if (content) {
         // Decode HTML entities
         const decoded = content
-          .replace(/&lt;/g, '<')
-          .replace(/&gt;/g, '>')
-          .replace(/&amp;/g, '&')
-          .replace(/&quot;/g, '"')
+          .replace(/</g, '<')
+          .replace(/>/g, '>')
+          .replace(/&/g, '&')
+          .replace(/"/g, '"')
           .replace(/&apos;/g, "'");
         extractedText += decoded + ' ';
       }
@@ -198,17 +257,22 @@ async function extractTextFromDOCX(arrayBuffer: ArrayBuffer): Promise<string> {
   
   console.log(`DOCX extraction result: ${extractedText.length} characters extracted`);
   
-  // Return up to 50k characters
   return extractedText.substring(0, 50000);
 }
 
 export function detectLanguage(text: string): 'ar' | 'en' {
-  // Simple language detection based on Arabic characters
+  // Enhanced language detection based on Arabic characters
   const arabicChars = text.match(/[\u0600-\u06FF\u0750-\u077F]/g);
-  const totalChars = text.replace(/\s/g, '').length;
+  const englishChars = text.match(/[a-zA-Z]/g);
   
-  if (arabicChars && arabicChars.length > totalChars * 0.3) {
+  const arabicCount = arabicChars ? arabicChars.length : 0;
+  const englishCount = englishChars ? englishChars.length : 0;
+  
+  // If more than 30% Arabic characters, consider it Arabic
+  const totalLetters = arabicCount + englishCount;
+  if (totalLetters > 0 && arabicCount / totalLetters > 0.3) {
     return 'ar';
   }
+  
   return 'en';
 }

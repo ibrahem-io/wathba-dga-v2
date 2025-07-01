@@ -1,5 +1,5 @@
 import React, { useState, useCallback } from 'react';
-import { Upload, File, X, AlertCircle, CheckCircle, XCircle, Brain, Loader, Users, FileText } from 'lucide-react';
+import { Upload, File, X, AlertCircle, CheckCircle, XCircle, Brain, Loader, Users, FileText, Eye } from 'lucide-react';
 import { langchainService } from '../services/langchainService';
 
 interface CriteriaAnalysis {
@@ -9,7 +9,7 @@ interface CriteriaAnalysis {
   evidence: string[];
   findings: string;
   recommendations: string[];
-  documentContent?: string; // New field for actual document content
+  documentContent?: string;
 }
 
 interface CriteriaUploadBoxProps {
@@ -37,6 +37,8 @@ export default function CriteriaUploadBox({
   const [error, setError] = useState<string>('');
   const [dragActive, setDragActive] = useState(false);
   const [analysisProgress, setAnalysisProgress] = useState<string>('');
+  const [ocrProgress, setOcrProgress] = useState<number>(0);
+  const [isUsingOCR, setIsUsingOCR] = useState(false);
 
   const handleDrag = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -69,20 +71,25 @@ export default function CriteriaUploadBox({
   };
 
   const handleFiles = (files: File[]) => {
-    const maxSize = 5 * 1024 * 1024; // 5MB
+    const maxSize = 10 * 1024 * 1024; // Increased to 10MB for image files
     const allowedTypes = [
       'application/pdf', 
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      'text/plain'
+      'text/plain',
+      'image/jpeg',
+      'image/jpg',
+      'image/png',
+      'image/tiff',
+      'image/bmp'
     ];
 
     const validFiles = files.filter(file => {
       if (file.size > maxSize) {
-        setError(language === 'ar' ? 'حجم الملف يجب أن يكون أقل من 5 ميجابايت' : 'File size must be less than 5MB');
+        setError(language === 'ar' ? 'حجم الملف يجب أن يكون أقل من 10 ميجابايت' : 'File size must be less than 10MB');
         return false;
       }
       if (!allowedTypes.includes(file.type)) {
-        setError(language === 'ar' ? 'يرجى رفع ملفات PDF أو DOCX أو TXT فقط' : 'Please upload PDF, DOCX, or TXT files only');
+        setError(language === 'ar' ? 'يرجى رفع ملفات PDF أو DOCX أو TXT أو صور فقط' : 'Please upload PDF, DOCX, TXT, or image files only');
         return false;
       }
       return true;
@@ -99,13 +106,22 @@ export default function CriteriaUploadBox({
 
     setIsAnalyzing(true);
     setError('');
+    setOcrProgress(0);
+    setIsUsingOCR(false);
     setAnalysisProgress(language === 'ar' ? 'بدء التحليل...' : 'Starting analysis...');
 
     try {
-      // For multiple files, analyze the first one (or combine them in a more sophisticated way)
       const primaryFile = files[0];
       
-      setAnalysisProgress(language === 'ar' ? 'تحليل الوثيقة بواسطة الوكلاء الذكيين...' : 'Analyzing document with smart agents...');
+      // Check if it's an image file
+      if (primaryFile.type.startsWith('image/')) {
+        setIsUsingOCR(true);
+        setAnalysisProgress(language === 'ar' ? 'تحليل الصورة باستخدام تقنية التعرف الضوئي على الحروف...' : 'Analyzing image using OCR technology...');
+      } else if (primaryFile.type === 'application/pdf') {
+        setAnalysisProgress(language === 'ar' ? 'استخراج النص من PDF (قد يتطلب OCR للمستندات الممسوحة ضوئياً)...' : 'Extracting text from PDF (may require OCR for scanned documents)...');
+      } else {
+        setAnalysisProgress(language === 'ar' ? 'تحليل الوثيقة بواسطة الوكلاء الذكيين...' : 'Analyzing document with smart agents...');
+      }
 
       console.log(`Starting analysis for criteria ${criteriaId} with file:`, primaryFile.name);
       
@@ -113,7 +129,6 @@ export default function CriteriaUploadBox({
       
       console.log(`Analysis completed for criteria ${criteriaId}:`, result);
       
-      // Convert LangChain result to expected format
       const analysis: CriteriaAnalysis = {
         score: result.score,
         status: result.status,
@@ -121,7 +136,7 @@ export default function CriteriaUploadBox({
         evidence: result.evidence.map(e => e.text),
         findings: result.findings,
         recommendations: result.recommendations,
-        documentContent: result.documentContent // Include the new document content field
+        documentContent: result.documentContent
       };
 
       setAnalysis(analysis);
@@ -129,7 +144,7 @@ export default function CriteriaUploadBox({
       setAnalysisProgress(language === 'ar' ? 'اكتمل التحليل بنجاح!' : 'Analysis completed successfully!');
 
     } catch (error) {
-      console.error('LangChain analysis error:', error);
+      console.error('Analysis error:', error);
       const errorMessage = error instanceof Error ? error.message : 
         (language === 'ar' 
           ? 'حدث خطأ أثناء تحليل الملفات'
@@ -138,14 +153,19 @@ export default function CriteriaUploadBox({
       setError(errorMessage);
       setAnalysisProgress('');
       
-      // Show more specific error messages
-      if (errorMessage.includes('API key')) {
+      if (errorMessage.includes('OCR')) {
+        setError(language === 'ar' 
+          ? 'فشل في تحليل الصورة بتقنية OCR. يرجى التأكد من وضوح النص في الصورة.'
+          : 'OCR analysis failed. Please ensure the text in the image is clear and readable.');
+      } else if (errorMessage.includes('API key')) {
         setError(language === 'ar' 
           ? 'مفتاح OpenAI API غير صحيح أو غير موجود. يرجى التحقق من الإعدادات.'
           : 'OpenAI API key is invalid or missing. Please check your configuration.');
       }
     } finally {
       setIsAnalyzing(false);
+      setIsUsingOCR(false);
+      setOcrProgress(0);
     }
   };
 
@@ -198,6 +218,13 @@ export default function CriteriaUploadBox({
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   };
 
+  const getFileTypeIcon = (file: File) => {
+    if (file.type.startsWith('image/')) {
+      return <Eye className="w-5 h-5 text-purple-600" />;
+    }
+    return <File className="w-5 h-5 text-blue-600" />;
+  };
+
   return (
     <div className={`border-2 rounded-lg p-4 transition-all ${
       analysis ? getStatusColor(analysis.status) : 'border-gray-200 bg-white'
@@ -243,14 +270,19 @@ export default function CriteriaUploadBox({
               ? 'اسحب وأفلت الملفات هنا أو انقر للتحديد'
               : 'Drag and drop files here or click to select'}
           </p>
-          <p className="text-xs text-gray-500 mb-3">
+          <p className="text-xs text-gray-500 mb-2">
             {language === 'ar' 
-              ? 'ملفات PDF أو DOCX أو TXT (حد أقصى 5 ميجابايت لكل ملف)'
-              : 'PDF, DOCX, or TXT files (Max 5MB each)'}
+              ? 'ملفات PDF أو DOCX أو TXT أو صور (حد أقصى 10 ميجابايت لكل ملف)'
+              : 'PDF, DOCX, TXT, or image files (Max 10MB each)'}
+          </p>
+          <p className="text-xs text-blue-600 mb-3">
+            {language === 'ar' 
+              ? 'يدعم الوثائق العربية والإنجليزية + تقنية OCR للصور والمستندات الممسوحة ضوئياً'
+              : 'Supports Arabic and English documents + OCR for images and scanned documents'}
           </p>
           <input
             type="file"
-            accept=".pdf,.docx,.txt"
+            accept=".pdf,.docx,.txt,.jpg,.jpeg,.png,.tiff,.bmp"
             onChange={handleFileInput}
             className="hidden"
             id={`file-upload-${criteriaId}`}
@@ -270,13 +302,18 @@ export default function CriteriaUploadBox({
           {uploadedFiles.map((file, index) => (
             <div key={index} className="flex items-center justify-between bg-gray-50 rounded-lg p-3">
               <div className={`flex items-center space-x-3 ${language === 'ar' ? 'space-x-reverse' : ''}`}>
-                <File className="w-5 h-5 text-blue-600" />
+                {getFileTypeIcon(file)}
                 <div>
                   <p className={`text-sm font-medium text-gray-800 ${language === 'ar' ? 'text-right' : 'text-left'}`}>
                     {file.name}
                   </p>
                   <p className={`text-xs text-gray-500 ${language === 'ar' ? 'text-right' : 'text-left'}`}>
                     {formatFileSize(file.size)}
+                    {file.type.startsWith('image/') && (
+                      <span className="ml-2 text-purple-600">
+                        {language === 'ar' ? '(صورة - سيتم استخدام OCR)' : '(Image - OCR will be used)'}
+                      </span>
+                    )}
                   </p>
                 </div>
               </div>
@@ -294,7 +331,7 @@ export default function CriteriaUploadBox({
           <div className="text-center pt-2">
             <input
               type="file"
-              accept=".pdf,.docx,.txt"
+              accept=".pdf,.docx,.txt,.jpg,.jpeg,.png,.tiff,.bmp"
               onChange={handleFileInput}
               className="hidden"
               id={`file-upload-more-${criteriaId}`}
@@ -316,13 +353,25 @@ export default function CriteriaUploadBox({
         <div className={`mt-4 p-3 bg-blue-50 rounded-lg flex items-center space-x-2 ${language === 'ar' ? 'space-x-reverse' : ''}`}>
           <div className="flex items-center space-x-2">
             <Loader className="w-5 h-5 text-blue-600 animate-spin" />
+            {isUsingOCR && <Eye className="w-4 h-4 text-purple-600" />}
             <Users className="w-4 h-4 text-purple-600" />
           </div>
           <div className="flex-1">
             <span className="text-blue-700 text-sm font-medium">
-              {language === 'ar' ? 'تحليل متعدد الوكلاء' : 'Multi-Agent Analysis'}
+              {isUsingOCR 
+                ? (language === 'ar' ? 'تحليل OCR + وكلاء ذكيين' : 'OCR Analysis + Smart Agents')
+                : (language === 'ar' ? 'تحليل متعدد الوكلاء' : 'Multi-Agent Analysis')
+              }
             </span>
             <p className="text-xs text-blue-600 mt-1">{analysisProgress}</p>
+            {isUsingOCR && ocrProgress > 0 && (
+              <div className="w-full bg-blue-200 rounded-full h-1 mt-1">
+                <div 
+                  className="bg-blue-600 h-1 rounded-full transition-all duration-300"
+                  style={{ width: `${ocrProgress * 100}%` }}
+                ></div>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -336,6 +385,13 @@ export default function CriteriaUploadBox({
             <span className="text-xs text-purple-600 font-medium">
               {language === 'ar' ? 'تحليل بواسطة الوكلاء الذكيين' : 'Multi-Agent Analysis'}
             </span>
+            {uploadedFiles.some(f => f.type.startsWith('image/')) && (
+              <>
+                <span className="text-xs text-gray-400">+</span>
+                <Eye className="w-4 h-4 text-purple-500" />
+                <span className="text-xs text-purple-600 font-medium">OCR</span>
+              </>
+            )}
           </div>
 
           {/* Confidence Score */}
