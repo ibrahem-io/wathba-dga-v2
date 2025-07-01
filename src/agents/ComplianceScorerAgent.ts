@@ -20,14 +20,15 @@ export class ComplianceScorerAgent extends BaseAgent {
         throw new Error('OpenAI API key not found');
       }
 
+      // FIXED VERSION - Using exact model and settings from your debug checklist
       this.llm = new ChatOpenAI({
-        modelName: 'gpt-4o',
-        temperature: 0.2,
-        maxTokens: 2000,
+        modelName: 'gpt-4o', // Make sure using gpt-4o, not gpt-4-vision-preview
+        temperature: 0.1,    // Lower temperature for more consistent results
+        maxTokens: 4000,     // Increased token limit
         openAIApiKey: apiKey,
       });
       
-      console.log(`Compliance Scorer Agent ${this.config.id} initialized`);
+      console.log(`Compliance Scorer Agent ${this.config.id} initialized with gpt-4o`);
     } catch (error) {
       console.error(`Failed to initialize LLM for agent ${this.config.id}:`, error);
       throw error;
@@ -47,6 +48,9 @@ export class ComplianceScorerAgent extends BaseAgent {
       console.log(`📊 Text length: ${documentMetadata.extractedText.length} characters`);
       console.log(`🔍 Evidence pieces: ${evidence.length}`);
 
+      // Debug extracted text immediately
+      this.debugExtractedText(documentMetadata.extractedText);
+
       // Determine analysis strategy based on document type and content
       const result = this.shouldUseVisionAPI(documentMetadata)
         ? await this.analyzeWithVision(documentMetadata, criteriaId, language, evidence)
@@ -59,6 +63,16 @@ export class ComplianceScorerAgent extends BaseAgent {
       console.error(`❌ Compliance scoring failed for criteria ${criteriaId}:`, error);
       return this.createErrorScore(criteriaId, evidence, language, documentMetadata, error);
     }
+  }
+
+  // Debug function to see what we're actually getting
+  private debugExtractedText(text: string): void {
+    console.log('=== DEBUG TEXT ===');
+    console.log('Length:', text.length);
+    console.log('First 50 chars:', text.substring(0, 50));
+    console.log('Has Arabic:', /[\u0600-\u06FF]/.test(text));
+    console.log('Raw character codes:', text.substring(0, 10).split('').map(c => c.charCodeAt(0)));
+    console.log('==================');
   }
 
   private shouldUseVisionAPI(metadata: DocumentMetadata): boolean {
@@ -89,8 +103,29 @@ export class ComplianceScorerAgent extends BaseAgent {
 
     console.log(`👁️ Using Vision API for image analysis`);
 
+    // FIXED VERSION - Copy this exactly from your debug checklist
+    const response = await this.llm.invoke([
+      new SystemMessage("استخرج النص العربي بدقة. اكتب النص بترميز UTF-8 الصحيح. لا تستخدم رموز خاصة."),
+      new HumanMessage({
+        content: [
+          { type: "text", text: "استخرج النص العربي من هذه الصورة:" },
+          { 
+            type: "image_url", 
+            image_url: { 
+              url: `data:image/png;base64,${metadata.base64Image}`,
+              detail: "high" 
+            }
+          }
+        ]
+      })
+    ]);
+
+    // Debug the response immediately
+    const extractedText = response.content as string;
+    this.debugExtractedText(extractedText);
+
+    // Now analyze the extracted text for compliance
     const systemPrompt = this.getDetailedAuditPrompt(criteriaId, language);
-    
     const evidenceText = evidence.length > 0 
       ? evidence.map((e, i) => `${i + 1}. ${e.text} (صلة: ${Math.round(e.relevance * 100)}%)`).join('\n')
       : (language === 'ar' ? 'لا توجد أدلة مباشرة مستخرجة مسبقاً' : 'No direct evidence extracted previously');
@@ -100,61 +135,33 @@ export class ComplianceScorerAgent extends BaseAgent {
 نوع الملف: ${metadata.fileType}
 حجم الملف: ${this.formatFileSize(metadata.fileSize)}
 
+النص المستخرج من الصورة:
+${extractedText}
+
 الأدلة المستخرجة مسبقاً (إن وجدت):
 ${evidenceText}
 
-يرجى تحليل هذه الصورة بعناية للبحث عن أي دليل على الامتثال للمتطلب ${criteriaId} وفقاً للإرشادات التفصيلية المحددة.
-
-تعليمات مهمة للتحليل البصري:
-1. اقرأ النص الموجود في الصورة بعناية
-2. ابحث عن أي إشارة أو دليل حتى لو كان غير مباشر
-3. استخدم السياق العام للوثيقة لفهم المحتوى
-4. كن متساهلاً في التقييم - أي إشارة للموضوع تعتبر إيجابية
-5. إذا كان النص غير واضح، ركز على الكلمات المفتاحية والمفاهيم العامة
-6. قدم تحليلاً مفصلاً حتى لو كانت الأدلة محدودة
-7. اذكر النص الفعلي الذي تم العثور عليه في الصورة
+قم بتحليل النص المستخرج من الصورة للبحث عن أي دليل على الامتثال للمتطلب ${criteriaId} وفقاً للإرشادات التفصيلية المحددة.
 ` : `
 File: ${metadata.filename}
 File Type: ${metadata.fileType}
 File Size: ${this.formatFileSize(metadata.fileSize)}
 
+Text extracted from image:
+${extractedText}
+
 Previously extracted evidence (if any):
 ${evidenceText}
 
-Please carefully analyze this image for any evidence of compliance with requirement ${criteriaId} according to the detailed guidelines specified.
-
-Important instructions for visual analysis:
-1. Read the text in the image carefully
-2. Look for any indication or evidence even if indirect
-3. Use the general context of the document to understand content
-4. Be lenient in evaluation - any reference to the topic counts as positive
-5. If text is unclear, focus on keywords and general concepts
-6. Provide detailed analysis even if evidence is limited
-7. Mention the actual text found in the image
+Analyze the text extracted from the image for any evidence of compliance with requirement ${criteriaId} according to the detailed guidelines specified.
 `;
 
-    const imageUrl = `data:${metadata.fileType};base64,${metadata.base64Image}`;
-    
-    const messages = [
+    const analysisResponse = await this.llm.invoke([
       new SystemMessage(systemPrompt),
-      new HumanMessage({
-        content: [
-          {
-            type: "text",
-            text: userPrompt
-          },
-          {
-            type: "image_url",
-            image_url: {
-              url: imageUrl
-            }
-          }
-        ]
-      })
-    ];
+      new HumanMessage(userPrompt)
+    ]);
 
-    const response = await this.llm.invoke(messages);
-    return this.parseResponse(response.content as string, criteriaId, evidence, metadata);
+    return this.parseResponse(analysisResponse.content as string, criteriaId, evidence, metadata);
   }
 
   private async analyzeWithText(
@@ -171,20 +178,18 @@ Important instructions for visual analysis:
 
     const systemPrompt = this.getDetailedAuditPrompt(criteriaId, language);
 
-    // Handle different text content scenarios
-    let textToAnalyze = metadata.extractedText;
+    // Clean the text to ensure proper UTF-8 encoding
+    let textToAnalyze = this.cleanTextForAPI(metadata.extractedText);
     let analysisNote = '';
 
     if (!textToAnalyze || textToAnalyze.trim().length === 0) {
-      // For documents with no extracted text (e.g., scanned PDFs)
       const fallbackMessage = language === 'ar' 
-        ? `هذه وثيقة ${metadata.fileType} (${metadata.filename}) لم يتم استخراج نص منها. قد تكون وثيقة ممسوحة ضوئياً أو تحتوي على صور بشكل أساسي. يرجى تحليل المحتوى بناءً على نوع الملف والسياق المتاح والأدلة المستخرجة.`
-        : `This is a ${metadata.fileType} document (${metadata.filename}) with no extracted text. It may be a scanned document or primarily contain images. Please analyze based on file type, available context, and extracted evidence.`;
+        ? `هذه وثيقة ${metadata.fileType} (${metadata.filename}) لم يتم استخراج نص منها. قد تكون وثيقة ممسوحة ضوئياً أو تحتوي على صور بشكل أساسي.`
+        : `This is a ${metadata.fileType} document (${metadata.filename}) with no extracted text. It may be a scanned document or primarily contain images.`;
       
       textToAnalyze = fallbackMessage;
       analysisNote = language === 'ar' ? 'وثيقة بدون نص مستخرج' : 'Document with no extracted text';
     } else if (textToAnalyze.length < 50) {
-      // For documents with very limited text
       analysisNote = language === 'ar' ? 'محتوى نصي محدود' : 'Limited text content';
     }
 
@@ -213,14 +218,6 @@ ${evidenceText}
 ${textToAnalyze}
 
 قم بتحليل هذا المحتوى بعناية للبحث عن أي دليل على الامتثال للمتطلب ${criteriaId} وفقاً للإرشادات التفصيلية المحددة.
-
-تعليمات مهمة:
-1. ابحث عن أي إشارة أو دليل حتى لو كان غير مباشر
-2. استخدم السياق العام للوثيقة لفهم المحتوى
-3. كن متساهلاً في التقييم - أي إشارة للموضوع تعتبر إيجابية
-4. إذا كان النص محدود، ركز على نوع الوثيقة والسياق المتاح
-5. قدم تحليلاً مفصلاً حتى لو كانت الأدلة محدودة
-6. استخدم الأدلة المستخرجة كمرجع إضافي
 ` : `
 Document: ${metadata.filename}
 File Type: ${metadata.fileType}
@@ -236,14 +233,6 @@ Available text for analysis:
 ${textToAnalyze}
 
 Carefully analyze this content for any evidence of compliance with requirement ${criteriaId} according to the detailed guidelines specified.
-
-Important instructions:
-1. Look for any indication or evidence even if indirect
-2. Use the general context of the document to understand content
-3. Be lenient in evaluation - any reference to the topic counts as positive
-4. If text is limited, focus on document type and available context
-5. Provide detailed analysis even if evidence is limited
-6. Use extracted evidence as additional reference
 `;
 
     const messages = [
@@ -253,6 +242,22 @@ Important instructions:
 
     const response = await this.llm.invoke(messages);
     return this.parseResponse(response.content as string, criteriaId, evidence, metadata);
+  }
+
+  // Clean text to ensure proper UTF-8 encoding and remove problematic characters
+  private cleanTextForAPI(text: string): string {
+    if (!text) return '';
+    
+    // Remove control characters and non-printable characters that could break API calls
+    let cleaned = text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/g, ' ');
+    
+    // Remove any remaining problematic characters
+    cleaned = cleaned.replace(/[^\u0020-\u007E\u0600-\u06FF\u0750-\u077F\u0590-\u05FF\s]/g, ' ');
+    
+    // Normalize whitespace
+    cleaned = cleaned.replace(/\s+/g, ' ').trim();
+    
+    return cleaned;
   }
 
   private getDetailedAuditPrompt(criteriaId: string, language: 'ar' | 'en'): string {
