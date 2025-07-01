@@ -96,36 +96,23 @@ async function extractTextFromPDF(arrayBuffer: ArrayBuffer, file: File): Promise
   console.log(`🔍 Starting enhanced PDF extraction for: ${file.name}`);
   
   try {
-    // Try pdf-parse first for better text extraction
-    const pdfParse = await import('pdf-parse');
-    const data = await pdfParse.default(arrayBuffer);
-    
-    if (data.text && data.text.trim().length > 50) {
-      const cleanedText = cleanArabicText(data.text);
-      console.log(`✅ pdf-parse extraction successful: ${cleanedText.length} characters`);
-      return cleanedText.substring(0, 50000);
-    }
-    
-    console.log('⚠️ pdf-parse extracted insufficient text, trying manual extraction...');
-  } catch (error) {
-    console.log('pdf-parse failed, falling back to manual extraction:', error);
-  }
-  
-  // Fallback to manual extraction
-  try {
+    // Use manual extraction method since pdf-parse is not available in browser
     const manualText = await extractPDFTextManual(arrayBuffer);
     const cleanedText = cleanArabicText(manualText);
     
-    if (cleanedText.length >= 50) {
+    if (cleanedText.length >= 20) { // Lower threshold for better compatibility
       console.log(`✅ Manual extraction succeeded: ${cleanedText.length} characters`);
       return cleanedText.substring(0, 50000);
     }
     
-    throw new Error(`Insufficient text extracted (${cleanedText.length} characters). Document may be image-based or corrupted.`);
+    // If manual extraction fails, return a placeholder that indicates Vision API should be used
+    console.log(`⚠️ Manual extraction insufficient (${cleanedText.length} characters). Document may be image-based.`);
+    return `[VISUAL_DOCUMENT_FOR_VISION_API]`;
     
   } catch (error) {
-    console.error('All PDF extraction methods failed:', error);
-    throw new Error(`PDF extraction failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    console.error('PDF extraction failed:', error);
+    // Return placeholder for Vision API processing
+    return `[VISUAL_DOCUMENT_FOR_VISION_API]`;
   }
 }
 
@@ -286,8 +273,8 @@ function cleanArabicText(text: string): string {
     const numbers = (trimmed.match(/\d/g) || []).length;
     const meaningfulChars = arabicChars + englishChars + numbers;
     
-    // Keep lines with at least 30% meaningful content
-    return meaningfulChars > trimmed.length * 0.3;
+    // Keep lines with at least 20% meaningful content (more lenient)
+    return meaningfulChars > trimmed.length * 0.2;
   });
 
   const result = cleanedLines.join('\n').trim();

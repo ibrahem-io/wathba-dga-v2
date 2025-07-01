@@ -32,17 +32,30 @@ export class DocumentParserAgent extends BaseAgent {
           base64Image = await fileToBase64(file);
           console.log(`📷 Converted to base64 for Vision API: ${base64Image.length} characters`);
           
-          // For visual documents, we'll let the Vision API handle text extraction
-          // Set a placeholder text that indicates Vision API should be used
-          extractedText = `[VISUAL_DOCUMENT_FOR_VISION_API]`;
-          confidence = 85; // High confidence for Vision API processing
+          // Try to extract text first, but don't fail if it doesn't work
+          try {
+            extractedText = await this.createErrorBoundary(
+              () => extractTextFromFile(file),
+              ''
+            );
+            
+            // If we got meaningful text, use it; otherwise rely on Vision API
+            if (extractedText && extractedText.trim().length > 50 && !extractedText.includes('[VISUAL_DOCUMENT_FOR_VISION_API]')) {
+              console.log(`📄 Text extraction successful: ${extractedText.length} characters`);
+              confidence = 80;
+            } else {
+              console.log(`📷 Text extraction insufficient, will rely on Vision API`);
+              extractedText = `[VISUAL_DOCUMENT_FOR_VISION_API]`;
+              confidence = 85; // High confidence for Vision API processing
+            }
+          } catch (textError) {
+            console.log(`📷 Text extraction failed, will use Vision API only:`, textError);
+            extractedText = `[VISUAL_DOCUMENT_FOR_VISION_API]`;
+            confidence = 85;
+          }
         } catch (error) {
-          console.warn(`⚠️ Failed to convert visual document to base64, falling back to text extraction:`, error);
-          // Fallback to traditional text extraction
-          extractedText = await this.createErrorBoundary(
-            () => extractTextFromFile(file),
-            ''
-          );
+          console.warn(`⚠️ Failed to convert visual document to base64:`, error);
+          throw new Error(`Failed to process visual document: ${error instanceof Error ? error.message : 'Unknown error'}`);
         }
       } else {
         // For text-based documents (DOCX, TXT), use traditional extraction
@@ -51,34 +64,22 @@ export class DocumentParserAgent extends BaseAgent {
           ''
         );
         console.log(`📄 Text extraction completed: ${extractedText.length} characters extracted`);
-      }
-
-      // For non-visual documents, validate text content
-      if (!isVisual && (!extractedText || extractedText.trim().length < 10)) {
-        console.warn(`⚠️ Insufficient text content extracted from ${file.name}`);
         
-        let errorMessage = 'Insufficient text content extracted from document.';
-        
-        if (file.type === 'application/pdf') {
-          errorMessage += ' This PDF may be image-based or scanned. The system will attempt Vision API processing.';
-        } else if (file.type.startsWith('image/')) {
-          errorMessage += ' OCR processing may have failed due to poor image quality or unreadable text.';
-        } else {
-          errorMessage += ' The document may be empty, corrupted, or in an unsupported format.';
+        // Validate text content for non-visual documents
+        if (!extractedText || extractedText.trim().length < 10) {
+          throw new Error(`Insufficient text content extracted from ${file.name}. The document may be empty, corrupted, or in an unsupported format.`);
         }
-        
-        throw new Error(errorMessage);
       }
 
-      // Detect language (for visual documents, we'll detect later from Vision API response)
-      const language = isVisual ? 'ar' : detectLanguage(extractedText); // Default to Arabic for visual docs
+      // Detect language (for visual documents with placeholder text, default to Arabic)
+      const language = (extractedText === '[VISUAL_DOCUMENT_FOR_VISION_API]') ? 'ar' : detectLanguage(extractedText);
       console.log(`🌐 Language detected: ${language}`);
 
-      // Calculate word count (for visual documents, this will be updated after Vision API processing)
-      const wordCount = isVisual ? 0 : this.calculateWordCount(extractedText, language);
+      // Calculate word count (for visual documents with placeholder, set to 0)
+      const wordCount = (extractedText === '[VISUAL_DOCUMENT_FOR_VISION_API]') ? 0 : this.calculateWordCount(extractedText, language);
 
       // Calculate extraction confidence
-      if (!isVisual) {
+      if (!isVisual && extractedText !== '[VISUAL_DOCUMENT_FOR_VISION_API]') {
         confidence = this.calculateExtractionConfidence(extractedText, file, language);
       }
 
