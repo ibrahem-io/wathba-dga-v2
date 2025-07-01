@@ -430,7 +430,7 @@ Return a JSON response with this structure:
 `;
 
     // Limit document text to prevent token overflow
-    const maxTextLength = 50000; // Reduced from 80000 to be more conservative
+    const maxTextLength = 40000; // Reduced further to ensure response fits
     let limitedText = documentText;
     if (documentText.length > maxTextLength) {
       limitedText = documentText.substring(0, maxTextLength) + '\n\n[Text truncated due to length...]';
@@ -449,20 +449,56 @@ Return a JSON response with this structure:
         }
       ],
       temperature: 0.1,
-      max_tokens: 1500, // Reduced to ensure response fits
+      max_tokens: 2500, // Increased from 1500 to 2500
       response_format: { type: "json_object" }
     });
 
-    const result = JSON.parse(response.choices[0].message.content || '{}');
-    
-    // Validate the result has required fields
-    if (!result.score || !result.status || !result.findings) {
-      throw new Error('Invalid analysis result from OpenAI');
+    const responseContent = response.choices[0].message.content;
+    if (!responseContent) {
+      throw new Error('Empty response from OpenAI API');
+    }
+
+    let result;
+    try {
+      result = JSON.parse(responseContent);
+    } catch (parseError) {
+      console.error('JSON parsing error:', parseError);
+      console.error('Response content:', responseContent);
+      throw new Error('Invalid JSON response from OpenAI API');
     }
     
-    return result as CriteriaAnalysis;
+    // Validate the result has required fields with default values
+    const validatedResult: CriteriaAnalysis = {
+      score: typeof result.score === 'number' ? result.score : 0,
+      status: ['pass', 'fail', 'partial'].includes(result.status) ? result.status : 'fail',
+      confidence: typeof result.confidence === 'number' ? result.confidence : 0,
+      evidence: Array.isArray(result.evidence) ? result.evidence : [],
+      findings: typeof result.findings === 'string' ? result.findings : 'No analysis available',
+      recommendations: Array.isArray(result.recommendations) ? result.recommendations : []
+    };
+
+    // Additional validation to ensure we have meaningful data
+    if (!validatedResult.findings || validatedResult.findings === 'No analysis available') {
+      throw new Error('Analysis result missing required findings');
+    }
+    
+    return validatedResult;
   } catch (error) {
     console.error('OpenAI API Error for criteria', criteriaId, ':', error);
+    
+    // Provide more specific error messages
+    if (error instanceof Error) {
+      if (error.message.includes('JSON')) {
+        throw new Error(language === 'ar' 
+          ? 'خطأ في تحليل استجابة الذكاء الاصطناعي. يرجى المحاولة مرة أخرى.'
+          : 'Error parsing AI response. Please try again.');
+      } else if (error.message.includes('API')) {
+        throw new Error(language === 'ar' 
+          ? 'فشل في الاتصال بخدمة الذكاء الاصطناعي. يرجى التحقق من مفتاح API.'
+          : 'Failed to connect to AI service. Please check your API key.');
+      }
+    }
+    
     throw new Error(language === 'ar' 
       ? 'فشل في تحليل الوثيقة. يرجى التحقق من مفتاح API والمحاولة مرة أخرى.'
       : 'Failed to analyze document. Please check your API key and try again.');
