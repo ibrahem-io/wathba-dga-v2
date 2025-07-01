@@ -185,7 +185,24 @@ Evaluate compliance for requirement ${criteriaId} with a positive mindset.
 
   private parseResponse(content: string, criteriaId: string, evidence: Evidence[]): ComplianceScore {
     try {
-      const parsed = JSON.parse(content);
+      // Clean the content by removing markdown code block delimiters
+      let cleanedContent = content.trim();
+      
+      // Remove leading ```json or ``` and trailing ```
+      if (cleanedContent.startsWith('```json')) {
+        cleanedContent = cleanedContent.substring(7);
+      } else if (cleanedContent.startsWith('```')) {
+        cleanedContent = cleanedContent.substring(3);
+      }
+      
+      if (cleanedContent.endsWith('```')) {
+        cleanedContent = cleanedContent.substring(0, cleanedContent.length - 3);
+      }
+      
+      // Trim any remaining whitespace
+      cleanedContent = cleanedContent.trim();
+      
+      const parsed = JSON.parse(cleanedContent);
       
       return {
         criteriaId,
