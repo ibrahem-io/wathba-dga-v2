@@ -8,7 +8,6 @@ interface DocumentParserInput {
 
 export class DocumentParserAgent extends BaseAgent {
   protected async onInitialize(): Promise<void> {
-    // Initialize any resources needed for document parsing
     console.log(`Document Parser Agent ${this.config.id} initialized`);
   }
 
@@ -18,47 +17,57 @@ export class DocumentParserAgent extends BaseAgent {
     try {
       console.log(`🔍 Starting document parsing for: ${file.name} (${file.type}, ${this.formatFileSize(file.size)})`);
 
-      // Check if this is a visual document that should use Vision API
+      // Determine processing strategy
       const isVisual = isVisualDocument(file);
-      console.log(`📄 Document type: ${isVisual ? 'Image (will use Vision API)' : 'Text-based'}`);
+      console.log(`📄 Document type: ${isVisual ? 'Image (Vision API)' : 'Text-based'}`);
 
       let extractedText = '';
       let base64Image: string | undefined;
       let confidence = 70;
+      let language: 'ar' | 'en' = 'ar';
 
       if (isVisual) {
-        // For image documents, convert to base64 for Vision API
+        // For image files, prepare for Vision API
         try {
+          console.log(`📷 Converting image to base64...`);
           base64Image = await fileToBase64(file);
-          console.log(`📷 Converted image to base64: ${base64Image.length} characters`);
+          console.log(`✅ Image converted to base64: ${base64Image.length} characters`);
           
           // For images, we don't extract text locally - Vision API will handle it
-          extractedText = '[IMAGE_FILE_FOR_VISION_API]';
+          extractedText = '';
           confidence = 90; // High confidence for Vision API processing
+          language = 'ar'; // Default to Arabic for Saudi context
           
         } catch (error) {
-          console.warn(`⚠️ Failed to convert image to base64:`, error);
+          console.error(`❌ Failed to convert image to base64:`, error);
           throw new Error(`Failed to process image file: ${error instanceof Error ? error.message : 'Unknown error'}`);
         }
       } else {
-        // For text-based documents (DOCX, TXT, PDF), use traditional extraction
+        // For text-based documents, extract text
         try {
+          console.log(`📄 Extracting text from document...`);
           extractedText = await extractTextFromFile(file);
-          console.log(`📄 Text extraction completed: ${extractedText.length} characters extracted`);
           
-          // Validate text content for non-visual documents
-          if (!extractedText || extractedText.trim().length < 10) {
-            console.warn(`⚠️ Insufficient text content extracted from ${file.name}`);
+          if (extractedText && extractedText.trim().length > 0) {
+            console.log(`✅ Text extraction successful: ${extractedText.length} characters`);
             
-            // For PDFs that failed text extraction, still proceed but with low confidence
-            if (file.type === 'application/pdf') {
-              extractedText = `[PDF_WITH_LIMITED_TEXT_CONTENT]`;
-              confidence = 40;
-            } else {
-              throw new Error(`Insufficient text content extracted from ${file.name}. The document may be empty, corrupted, or in an unsupported format.`);
-            }
+            // Detect language and calculate metrics
+            language = detectLanguage(extractedText);
+            confidence = this.calculateExtractionConfidence(extractedText, file, language);
+            
+            console.log(`🌐 Language detected: ${language}`);
+            console.log(`📊 Extraction confidence: ${confidence}%`);
           } else {
-            confidence = this.calculateExtractionConfidence(extractedText, file, detectLanguage(extractedText));
+            console.warn(`⚠️ No text content extracted from ${file.name}`);
+            
+            if (file.type === 'application/pdf') {
+              // For PDFs with no text, this might be a scanned document
+              extractedText = '';
+              confidence = 30;
+              console.log(`📄 PDF appears to be scanned or image-based`);
+            } else {
+              throw new Error(`No readable text content found in ${file.name}. The document may be empty or corrupted.`);
+            }
           }
         } catch (error) {
           console.error(`❌ Text extraction failed for ${file.name}:`, error);
@@ -66,16 +75,8 @@ export class DocumentParserAgent extends BaseAgent {
         }
       }
 
-      // Detect language (for images with placeholder text, default to Arabic)
-      const language = (extractedText === '[IMAGE_FILE_FOR_VISION_API]' || extractedText === '[PDF_WITH_LIMITED_TEXT_CONTENT]') 
-        ? 'ar' 
-        : detectLanguage(extractedText);
-      console.log(`🌐 Language detected: ${language}`);
-
-      // Calculate word count (for images and limited PDFs with placeholder, set to 0)
-      const wordCount = (extractedText === '[IMAGE_FILE_FOR_VISION_API]' || extractedText === '[PDF_WITH_LIMITED_TEXT_CONTENT]') 
-        ? 0 
-        : this.calculateWordCount(extractedText, language);
+      // Calculate word count
+      const wordCount = this.calculateWordCount(extractedText, language);
 
       const metadata: DocumentMetadata = {
         filename: file.name,
@@ -102,20 +103,20 @@ export class DocumentParserAgent extends BaseAgent {
     } catch (error) {
       console.error(`❌ Document parsing failed for ${file.name}:`, error);
       
-      // Provide more specific error messages based on the error type
+      // Provide specific error messages
       let errorMessage = 'Failed to parse document';
       
       if (error instanceof Error) {
         if (error.message.includes('base64')) {
-          errorMessage = `Image processing failed: ${error.message}. Please ensure the image is not corrupted and try again.`;
-        } else if (error.message.includes('Insufficient text')) {
-          errorMessage = `Document content issue: ${error.message}`;
-        } else if (error.message.includes('PDF extraction failed')) {
-          errorMessage = `PDF processing failed: ${error.message}. The PDF may be corrupted, password-protected, or contain only images.`;
+          errorMessage = `Image processing failed: Please ensure the image is not corrupted and try again.`;
+        } else if (error.message.includes('No readable text')) {
+          errorMessage = `Document appears to be empty or corrupted. Please check the file and try again.`;
+        } else if (error.message.includes('PDF processing failed')) {
+          errorMessage = `PDF processing failed. The file may be password-protected, corrupted, or a scanned document.`;
         } else if (error.message.includes('Unsupported file type')) {
           errorMessage = `Unsupported file format: ${file.type}. Please upload PDF, DOCX, TXT, or image files.`;
         } else {
-          errorMessage = `Document parsing error: ${error.message}`;
+          errorMessage = error.message;
         }
       }
       
@@ -124,16 +125,16 @@ export class DocumentParserAgent extends BaseAgent {
   }
 
   private calculateWordCount(text: string, language: 'ar' | 'en'): number {
-    // Enhanced word counting for both Arabic and English
+    if (!text || text.trim().length === 0) return 0;
+    
     if (language === 'ar') {
-      // Arabic word counting - split by spaces and filter meaningful words
+      // Arabic word counting
       const arabicWords = text
         .trim()
         .split(/\s+/)
         .filter(word => {
-          // Remove punctuation and check if word contains Arabic characters
           const cleanWord = word.replace(/[^\u0600-\u06FF]/g, '');
-          return cleanWord.length >= 2; // Minimum 2 Arabic characters
+          return cleanWord.length >= 2;
         });
       
       return arabicWords.length;
@@ -143,9 +144,8 @@ export class DocumentParserAgent extends BaseAgent {
         .trim()
         .split(/\s+/)
         .filter(word => {
-          // Remove punctuation and check if word contains English letters
           const cleanWord = word.replace(/[^a-zA-Z]/g, '');
-          return cleanWord.length >= 2; // Minimum 2 English characters
+          return cleanWord.length >= 2;
         });
       
       return englishWords.length;
@@ -160,9 +160,9 @@ export class DocumentParserAgent extends BaseAgent {
     confidence += fileTypeBonus;
 
     // Text length bonuses
-    if (text.length > 1000) confidence += 10;
+    if (text.length > 500) confidence += 5;
+    if (text.length > 2000) confidence += 10;
     if (text.length > 5000) confidence += 10;
-    if (text.length > 10000) confidence += 5;
 
     // Language-specific content quality
     const languageQuality = this.assessLanguageQuality(text, language);
@@ -174,12 +174,12 @@ export class DocumentParserAgent extends BaseAgent {
 
     // Penalize very short content
     if (text.length < 100) {
-      confidence -= 20;
+      confidence -= 15;
     } else if (text.length < 300) {
-      confidence -= 10;
+      confidence -= 5;
     }
 
-    return Math.min(95, Math.max(50, confidence));
+    return Math.min(95, Math.max(30, confidence));
   }
 
   private getFileTypeBonus(fileType: string): number {
@@ -187,7 +187,7 @@ export class DocumentParserAgent extends BaseAgent {
       'text/plain': 15,
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 10,
       'application/pdf': 5,
-      'image/jpeg': 15, // Higher bonus for Vision API
+      'image/jpeg': 15,
       'image/png': 15,
       'image/tiff': 15,
       'image/bmp': 10,
@@ -201,31 +201,27 @@ export class DocumentParserAgent extends BaseAgent {
     let quality = 0;
 
     if (language === 'ar') {
-      // Arabic text quality assessment
       const arabicChars = (text.match(/[\u0600-\u06FF]/g) || []).length;
       const totalChars = text.replace(/\s/g, '').length;
       
       if (totalChars > 0) {
         const arabicRatio = arabicChars / totalChars;
-        quality += arabicRatio * 15; // Up to 15 points for high Arabic content
+        quality += arabicRatio * 15;
       }
 
-      // Check for Arabic word patterns
       const arabicWords = (text.match(/[\u0600-\u06FF]{3,}/g) || []).length;
       if (arabicWords > 10) quality += 5;
       if (arabicWords > 50) quality += 5;
 
     } else {
-      // English text quality assessment
       const englishChars = (text.match(/[a-zA-Z]/g) || []).length;
       const totalChars = text.replace(/\s/g, '').length;
       
       if (totalChars > 0) {
         const englishRatio = englishChars / totalChars;
-        quality += englishRatio * 15; // Up to 15 points for high English content
+        quality += englishRatio * 15;
       }
 
-      // Check for English word patterns
       const englishWords = (text.match(/[a-zA-Z]{3,}/g) || []).length;
       if (englishWords > 10) quality += 5;
       if (englishWords > 50) quality += 5;
@@ -251,7 +247,7 @@ export class DocumentParserAgent extends BaseAgent {
     const punctuationMarks = (text.match(/[.!?؟،,;:]/g) || []).length;
     if (punctuationMarks > 5) structureBonus += 2;
 
-    // Check for numbers (often indicate structured content)
+    // Check for numbers
     const numbers = (text.match(/\d+/g) || []).length;
     if (numbers > 0) structureBonus += 1;
     if (numbers > 10) structureBonus += 1;

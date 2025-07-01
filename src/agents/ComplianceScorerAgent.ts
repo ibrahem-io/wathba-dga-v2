@@ -20,7 +20,6 @@ export class ComplianceScorerAgent extends BaseAgent {
         throw new Error('OpenAI API key not found');
       }
 
-      // Use gpt-4o for enhanced document analysis
       this.llm = new ChatOpenAI({
         modelName: 'gpt-4o',
         temperature: 0.2,
@@ -44,15 +43,12 @@ export class ComplianceScorerAgent extends BaseAgent {
 
     try {
       console.log(`🔍 Starting compliance scoring for criteria ${criteriaId}`);
-      console.log(`📄 Document: ${documentMetadata.filename} (${documentMetadata.wordCount} words, ${documentMetadata.confidence}% confidence)`);
+      console.log(`📄 Document: ${documentMetadata.filename} (${documentMetadata.fileType})`);
+      console.log(`📊 Text length: ${documentMetadata.extractedText.length} characters`);
       console.log(`🔍 Evidence pieces: ${evidence.length}`);
-      console.log(`📁 File type: ${documentMetadata.fileType}`);
 
-      // Only use Vision API for actual image files, not PDFs
-      const shouldUseVision = this.shouldUseVisionAPI(documentMetadata);
-      console.log(`👁️ Using Vision API: ${shouldUseVision}`);
-
-      const result = shouldUseVision && documentMetadata.base64Image
+      // Determine analysis strategy based on document type and content
+      const result = this.shouldUseVisionAPI(documentMetadata)
         ? await this.analyzeWithVision(documentMetadata, criteriaId, language, evidence)
         : await this.analyzeWithText(documentMetadata, criteriaId, language, evidence);
 
@@ -61,14 +57,12 @@ export class ComplianceScorerAgent extends BaseAgent {
 
     } catch (error) {
       console.error(`❌ Compliance scoring failed for criteria ${criteriaId}:`, error);
-      
-      // Create a fallback score with error information
       return this.createErrorScore(criteriaId, evidence, language, documentMetadata, error);
     }
   }
 
   private shouldUseVisionAPI(metadata: DocumentMetadata): boolean {
-    // Only use Vision API for actual image files, not PDFs
+    // Only use Vision API for actual image files with base64 data
     const imageTypes = [
       'image/jpeg',
       'image/jpg', 
@@ -78,7 +72,9 @@ export class ComplianceScorerAgent extends BaseAgent {
       'image/webp'
     ];
     
-    return imageTypes.includes(metadata.fileType) && metadata.isVisualDocument;
+    return imageTypes.includes(metadata.fileType) && 
+           metadata.isVisualDocument && 
+           !!metadata.base64Image;
   }
 
   private async analyzeWithVision(
@@ -95,13 +91,12 @@ export class ComplianceScorerAgent extends BaseAgent {
 
     const systemPrompt = this.getDetailedAuditPrompt(criteriaId, language);
     
-    // Include evidence context if available
     const evidenceText = evidence.length > 0 
       ? evidence.map((e, i) => `${i + 1}. ${e.text} (صلة: ${Math.round(e.relevance * 100)}%)`).join('\n')
       : (language === 'ar' ? 'لا توجد أدلة مباشرة مستخرجة مسبقاً' : 'No direct evidence extracted previously');
 
     const userPrompt = language === 'ar' ? `
-الوثيقة: ${metadata.filename}
+الملف: ${metadata.filename}
 نوع الملف: ${metadata.fileType}
 حجم الملف: ${this.formatFileSize(metadata.fileSize)}
 
@@ -119,7 +114,7 @@ ${evidenceText}
 6. قدم تحليلاً مفصلاً حتى لو كانت الأدلة محدودة
 7. اذكر النص الفعلي الذي تم العثور عليه في الصورة
 ` : `
-Document: ${metadata.filename}
+File: ${metadata.filename}
 File Type: ${metadata.fileType}
 File Size: ${this.formatFileSize(metadata.fileSize)}
 
@@ -138,7 +133,6 @@ Important instructions for visual analysis:
 7. Mention the actual text found in the image
 `;
 
-    // Create message with image - use proper MIME type
     const imageUrl = `data:${metadata.fileType};base64,${metadata.base64Image}`;
     
     const messages = [
@@ -177,34 +171,29 @@ Important instructions for visual analysis:
 
     const systemPrompt = this.getDetailedAuditPrompt(criteriaId, language);
 
-    // Handle special cases where document has limited text content
+    // Handle different text content scenarios
     let textToAnalyze = metadata.extractedText;
     let analysisNote = '';
 
-    if (textToAnalyze === '[IMAGE_FILE_FOR_VISION_API]') {
-      // This shouldn't happen in text analysis, but handle it gracefully
+    if (!textToAnalyze || textToAnalyze.trim().length === 0) {
+      // For documents with no extracted text (e.g., scanned PDFs)
       const fallbackMessage = language === 'ar' 
-        ? `هذا ملف صورة (${metadata.filename}) يجب معالجته بـ Vision API.`
-        : `This is an image file (${metadata.filename}) that should be processed with Vision API.`;
-      textToAnalyze = fallbackMessage;
-      analysisNote = language === 'ar' ? 'ملف صورة' : 'Image file';
-    } else if (textToAnalyze === '[PDF_WITH_LIMITED_TEXT_CONTENT]' || textToAnalyze.trim().length < 20) {
-      // For PDFs that couldn't be text-extracted, provide a helpful message
-      const fallbackMessage = language === 'ar' 
-        ? `هذه وثيقة PDF (${metadata.filename}) مع محتوى نصي محدود. قد تكون وثيقة ممسوحة ضوئياً أو تحتوي على صور بشكل أساسي. يرجى تحليل المحتوى بناءً على نوع الملف والسياق المتاح والأدلة المستخرجة.`
-        : `This is a PDF document (${metadata.filename}) with limited text content. It may be a scanned document or primarily contain images. Please analyze based on file type, available context, and extracted evidence.`;
+        ? `هذه وثيقة ${metadata.fileType} (${metadata.filename}) لم يتم استخراج نص منها. قد تكون وثيقة ممسوحة ضوئياً أو تحتوي على صور بشكل أساسي. يرجى تحليل المحتوى بناءً على نوع الملف والسياق المتاح والأدلة المستخرجة.`
+        : `This is a ${metadata.fileType} document (${metadata.filename}) with no extracted text. It may be a scanned document or primarily contain images. Please analyze based on file type, available context, and extracted evidence.`;
       
       textToAnalyze = fallbackMessage;
-      analysisNote = language === 'ar' ? 'PDF مع محتوى محدود' : 'PDF with limited content';
+      analysisNote = language === 'ar' ? 'وثيقة بدون نص مستخرج' : 'Document with no extracted text';
+    } else if (textToAnalyze.length < 50) {
+      // For documents with very limited text
+      analysisNote = language === 'ar' ? 'محتوى نصي محدود' : 'Limited text content';
     }
 
-    // Limit text to prevent token overflow but keep more content for better analysis
+    // Limit text to prevent token overflow
     const maxTextLength = 12000;
     if (textToAnalyze.length > maxTextLength) {
       textToAnalyze = textToAnalyze.substring(0, maxTextLength) + '...';
     }
 
-    // Include evidence in the analysis
     const evidenceText = evidence.length > 0 
       ? evidence.map((e, i) => `${i + 1}. ${e.text} (صلة: ${Math.round(e.relevance * 100)}%)`).join('\n')
       : (language === 'ar' ? 'لم يتم العثور على أدلة مباشرة' : 'No direct evidence found');
@@ -273,32 +262,13 @@ Important instructions:
 
 الهدف: تحديد مستوى وعي منسوبي الجهة الحكومية بالتحول الرقمي وإعداد الدراسات والبرامج اللازمة لزيادة هذا الوعي.
 
-إطار التقييم الشامل:
-
-المتطلب الأول: دراسة الوعي بالتحول الرقمي
 ابحث عن أي إشارة إلى:
 - دراسات أو تقييمات أو مسوحات
 - تحليل الوعي أو المعرفة أو المهارات
 - التحول الرقمي أو الرقمنة أو التقنية
 - فهم أو إدراك أو وعي الموظفين
 - خطط أو مبادرات أو مشاريع رقمية
-- فجوات أو احتياجات تدريبية
-
-المتطلب الثاني: تطوير برامج التوعية
-ابحث عن أي إشارة إلى:
 - برامج تدريبية أو توعوية أو تطويرية
-- ورش عمل أو دورات أو جلسات تدريب
-- مجموعات مستهدفة أو فئات موظفين
-- استراتيجيات تواصل أو تنفيذ
-- جداول زمنية أو خطط تنفيذ
-
-معايير التقييم المتساهلة:
-✅ مطابق (80-100%): وجود إشارات واضحة لمعظم العناصر
-⚠️ مطابق جزئياً (40-79%): وجود بعض الإشارات أو العناصر
-❌ غير مطابق (0-39%): عدم وجود إشارات واضحة
-
-الكلمات المفتاحية للبحث (كن مرناً في البحث):
-دراسة، تحليل، تقييم، مسح، استطلاع، الوعي، المعرفة، التحول، الرقمي، التقنية، الرقمنة، برنامج، تدريب، تطوير، ورشة، دورة، موظف، منسوب، مهارة، ثقافة
 
 كن متساهلاً جداً - أي إشارة لهذه المفاهيم حتى لو كانت بسيطة تعتبر إيجابية.
 
@@ -315,32 +285,13 @@ Important instructions:
 
 Objective: Determine the level of digital transformation awareness among government entity employees and prepare necessary studies and programs to increase this awareness.
 
-Comprehensive Assessment Framework:
-
-Requirement 1: Digital Transformation Awareness Study
 Look for any reference to:
 - Studies, assessments, or surveys
 - Analysis of awareness, knowledge, or skills
 - Digital transformation, digitization, or technology
 - Employee understanding, perception, or awareness
 - Digital plans, initiatives, or projects
-- Gaps or training needs
-
-Requirement 2: Awareness Programs Development
-Look for any reference to:
 - Training, awareness, or development programs
-- Workshops, courses, or training sessions
-- Target groups or employee categories
-- Communication or implementation strategies
-- Timelines or implementation plans
-
-Lenient Evaluation Criteria:
-✅ COMPLIANT (80-100%): Clear references to most elements
-⚠️ PARTIALLY COMPLIANT (40-79%): Some references or elements present
-❌ NON-COMPLIANT (0-39%): No clear references
-
-Keywords to search for (be flexible):
-study, analysis, assessment, survey, awareness, knowledge, transformation, digital, technology, digitization, program, training, development, workshop, course, employee, staff, skill, culture
 
 Be very lenient - any reference to these concepts, even simple ones, counts as positive.
 
@@ -357,38 +308,13 @@ Return JSON response only:
       '5.4.2': {
         ar: `أنت خبير مدقق متخصص في تقييم المتطلب 5.4.2: "تنفيذ برامج التوعية بالتحول الرقمي وقياس أثرها"
 
-الهدف: تنفيذ البرامج المعتمدة لزيادة وعي الموظفين بالتحول الرقمي وقياس أثر هذه البرامج.
-
 ابحث عن أي إشارة إلى:
-
-التنفيذ والتطبيق:
 - تنفيذ أو تطبيق أو تطبق أو ينفذ
 - أنشطة أو فعاليات أو مبادرات منفذة
 - برامج أو ورش أو دورات تم تقديمها
-- مشاركة أو حضور أو تفاعل الموظفين
-
-القياس والمتابعة:
 - قياس أو تقييم أو مراجعة
 - مؤشرات أو نسب أو إحصائيات
 - نتائج أو تقارير أو تقدم
-- فعالية أو أثر أو تأثير
-
-التدريب والتوعية:
-- ورش عمل أو دورات تدريبية
-- جلسات توعية أو تثقيف
-- محتوى تدريبي أو مواد تعليمية
-- مدربين أو محاضرين
-
-القيادة والإشراف:
-- مشاركة القيادة أو الإدارة العليا
-- إشراف أو متابعة أو توجيه
-- لجان أو فرق عمل
-- تقارير إدارية أو محاضر اجتماعات
-
-معايير التقييم المتساهلة:
-✅ مطابق (70-100%): وجود إشارات للتنفيذ والقياس
-⚠️ مطابق جزئياً (35-69%): وجود إشارات للتنفيذ أو القياس
-❌ غير مطابق (0-34%): عدم وجود إشارات واضحة
 
 كن متساهلاً جداً في التقييم - أي إشارة للتنفيذ أو الأنشطة تعتبر إيجابية.
 
@@ -403,38 +329,13 @@ Return JSON response only:
 }`,
         en: `You are an expert auditor specialized in evaluating requirement 5.4.2: "Implementing Digital Transformation Awareness Programs and Measuring Their Impact"
 
-Objective: Implement approved programs to increase employee awareness of digital transformation and measure the impact of these programs.
-
 Look for any reference to:
-
-Implementation and Application:
 - Implementation, execution, or application
 - Activities, events, or implemented initiatives
 - Programs, workshops, or courses delivered
-- Employee participation, attendance, or engagement
-
-Measurement and Monitoring:
 - Measurement, evaluation, or review
 - Indicators, rates, or statistics
 - Results, reports, or progress
-- Effectiveness, impact, or influence
-
-Training and Awareness:
-- Workshops or training courses
-- Awareness or education sessions
-- Training content or educational materials
-- Trainers or instructors
-
-Leadership and Supervision:
-- Leadership or senior management participation
-- Supervision, monitoring, or guidance
-- Committees or working teams
-- Management reports or meeting minutes
-
-Lenient Evaluation Criteria:
-✅ COMPLIANT (70-100%): References to implementation and measurement
-⚠️ PARTIALLY COMPLIANT (35-69%): References to implementation or measurement
-❌ NON-COMPLIANT (0-34%): No clear references
 
 Be very lenient in evaluation - any reference to implementation or activities counts as positive.
 
@@ -451,38 +352,13 @@ Return JSON response only:
       '5.4.3': {
         ar: `أنت خبير مدقق متخصص في تقييم المتطلب 5.4.3: "استخدام الأدوات التقنية لمساعدة عمليات الجهة"
 
-الهدف: تعزيز اعتماد الأدوات التقنية لتحسين أداء العمل اليومي والروتيني للموظفين.
-
 ابحث عن أي إشارة إلى:
-
-الأدوات والتقنيات:
 - أدوات تقنية أو رقمية أو إلكترونية
 - أنظمة أو برمجيات أو تطبيقات
 - منصات أو حلول تقنية
-- تقنيات أو تكنولوجيا
-
-الاستخدام والاعتماد:
 - استخدام أو اعتماد أو تطبيق
-- تشغيل أو تفعيل أو تنفيذ
-- الاستفادة من أو العمل بـ
-- تحسين أو تطوير الأداء
-
-التدريب والدعم:
 - تدريب على الأدوات أو الأنظمة
 - دعم تقني أو مساعدة فنية
-- ورش عمل تقنية أو دورات
-- إرشادات أو أدلة استخدام
-
-العمليات والإجراءات:
-- تحسين العمليات أو الإجراءات
-- أتمتة أو رقمنة المهام
-- تسهيل أو تبسيط العمل
-- كفاءة أو فعالية الأداء
-
-معايير التقييم المتساهلة:
-✅ مطابق (70-100%): وجود إشارات واضحة للأدوات والاستخدام
-⚠️ مطابق جزئياً (35-69%): وجود إشارات للأدوات أو الاستخدام
-❌ غير مطابق (0-34%): عدم وجود إشارات واضحة
 
 كن متساهلاً - أي إشارة للتقنية أو الأدوات تعتبر إيجابية.
 
@@ -494,89 +370,18 @@ Return JSON response only:
   "findings": "تحليل مفصل مع ربط الأدلة بالمتطلبات المحددة",
   "recommendations": ["توصية محددة 1", "توصية محددة 2", "توصية محددة 3"],
   "documentContent": "ملخص للمحتوى الفعلي الموجود في الوثيقة والذي تم تحليله"
-}`,
-        en: `You are an expert auditor specialized in evaluating requirement 5.4.3: "Using Technical Tools to Assist in Entity Operations"
-
-Objective: Enhance adoption of technical tools to improve employees' daily and routine work performance.
-
-Look for any reference to:
-
-Tools and Technologies:
-- Technical, digital, or electronic tools
-- Systems, software, or applications
-- Platforms or technical solutions
-- Technologies or technology
-
-Usage and Adoption:
-- Use, adoption, or application
-- Operation, activation, or implementation
-- Utilization or working with
-- Performance improvement or development
-
-Training and Support:
-- Training on tools or systems
-- Technical support or assistance
-- Technical workshops or courses
-- Guidelines or user manuals
-
-Operations and Procedures:
-- Process or procedure improvement
-- Automation or digitization of tasks
-- Facilitating or simplifying work
-- Efficiency or performance effectiveness
-
-Lenient Evaluation Criteria:
-✅ COMPLIANT (70-100%): Clear references to tools and usage
-⚠️ PARTIALLY COMPLIANT (35-69%): References to tools or usage
-❌ NON-COMPLIANT (0-34%): No clear references
-
-Be lenient - any reference to technology or tools counts as positive.
-
-Return JSON response only:
-{
-  "score": number (0-100),
-  "status": "pass" | "fail" | "partial",
-  "confidence": number (70-95),
-  "findings": "detailed analysis linking evidence to specific requirements",
-  "recommendations": ["specific recommendation 1", "specific recommendation 2", "specific recommendation 3"],
-  "documentContent": "summary of actual content found in the document that was analyzed"
 }`
       },
       '5.4.4': {
         ar: `أنت خبير مدقق متخصص في تقييم المتطلب 5.4.4: "التطوير المستمر للثقافة الرقمية"
 
-الهدف: وضع استراتيجيات وخطط للتطوير المستمر للثقافة الرقمية في الجهة ومتابعة تطبيقها وقياس أثرها على الأداء العام والتحسين المستمر.
-
 ابحث عن أي إشارة إلى:
-
-الاستراتيجيات والخطط:
 - استراتيجية أو استراتيجيات
 - خطة أو خطط أو تخطيط
-- رؤية أو أهداف مستقبلية
-- مبادرات أو مشاريع تطويرية
-
-التطوير والتحسين:
-- تطوير أو تحسين أو تعزيز
-- تطوير مستمر أو تحسين مستمر
-- نمو أو تقدم أو تقدم
-- رفع أو زيادة القدرات
-
-المتابعة والقياس:
+- التطوير المستمر أو التحسين المستمر
 - متابعة أو مراقبة أو رصد
-- قياس أو تقييم أو مراجعة
-- مؤشرات أو نتائج أو تقارير
-- أثر أو تأثير على الأداء
-
-الثقافة الرقمية:
+- قياس الأثر أو تقييم الأثر
 - ثقافة رقمية أو ثقافة تقنية
-- وعي رقمي أو معرفة تقنية
-- مهارات رقمية أو قدرات تقنية
-- بيئة رقمية أو تحول رقمي
-
-معايير التقييم المتساهلة:
-✅ مطابق (70-100%): وجود إشارات للتطوير والمتابعة
-⚠️ مطابق جزئياً (35-69%): وجود إشارات للتطوير أو المتابعة
-❌ غير مطابق (0-34%): عدم وجود إشارات واضحة
 
 كن متساهلاً جداً - أي إشارة للتطوير أو التحسين تعتبر إيجابية.
 
@@ -588,52 +393,6 @@ Return JSON response only:
   "findings": "تحليل مفصل مع ربط الأدلة بالمتطلبات المحددة",
   "recommendations": ["توصية محددة 1", "توصية محددة 2", "توصية محددة 3"],
   "documentContent": "ملخص للمحتوى الفعلي الموجود في الوثيقة والذي تم تحليله"
-}`,
-        en: `You are an expert auditor specialized in evaluating requirement 5.4.4: "Continuous Development of Digital Culture"
-
-Objective: Develop strategies and plans for continuous development of digital culture in the agency, monitor their implementation, and measure their impact on overall performance and continuous improvement.
-
-Look for any reference to:
-
-Strategies and Plans:
-- Strategy or strategies
-- Plan, plans, or planning
-- Vision or future objectives
-- Development initiatives or projects
-
-Development and Improvement:
-- Development, improvement, or enhancement
-- Continuous development or continuous improvement
-- Growth, progress, or advancement
-- Capacity building or increasing capabilities
-
-Monitoring and Measurement:
-- Monitoring, tracking, or oversight
-- Measurement, evaluation, or review
-- Indicators, results, or reports
-- Impact or effect on performance
-
-Digital Culture:
-- Digital culture or technical culture
-- Digital awareness or technical knowledge
-- Digital skills or technical capabilities
-- Digital environment or digital transformation
-
-Lenient Evaluation Criteria:
-✅ COMPLIANT (70-100%): References to development and monitoring
-⚠️ PARTIALLY COMPLIANT (35-69%): References to development or monitoring
-❌ NON-COMPLIANT (0-34%): No clear references
-
-Be very lenient - any reference to development or improvement counts as positive.
-
-Return JSON response only:
-{
-  "score": number (0-100),
-  "status": "pass" | "fail" | "partial",
-  "confidence": number (70-95),
-  "findings": "detailed analysis linking evidence to specific requirements",
-  "recommendations": ["specific recommendation 1", "specific recommendation 2", "specific recommendation 3"],
-  "documentContent": "summary of actual content found in the document that was analyzed"
 }`
       }
     };
@@ -682,7 +441,6 @@ Return JSON response only:
       // Clean the content by removing markdown code block delimiters
       let cleanedContent = content.trim();
       
-      // Remove leading ```json or ``` and trailing ```
       if (cleanedContent.startsWith('```json')) {
         cleanedContent = cleanedContent.substring(7);
       } else if (cleanedContent.startsWith('```')) {
@@ -693,7 +451,6 @@ Return JSON response only:
         cleanedContent = cleanedContent.substring(0, cleanedContent.length - 3);
       }
       
-      // Trim any remaining whitespace
       cleanedContent = cleanedContent.trim();
       
       const parsed = JSON.parse(cleanedContent);
@@ -725,10 +482,10 @@ Return JSON response only:
         : `Image (${metadata.fileType}) analyzed using AI Vision technology. File: ${metadata.filename}`;
     }
     
-    if (!text || text.trim().length < 10 || text === '[IMAGE_FILE_FOR_VISION_API]' || text === '[PDF_WITH_LIMITED_TEXT_CONTENT]') {
+    if (!text || text.trim().length < 10) {
       return language === 'ar' 
-        ? `وثيقة ${metadata.fileType} (${metadata.filename}) مع محتوى نصي محدود. قد تكون وثيقة ممسوحة ضوئياً أو تحتوي على صور.`
-        : `${metadata.fileType} document (${metadata.filename}) with limited text content. May be a scanned document or contain images.`;
+        ? `وثيقة ${metadata.fileType} (${metadata.filename}) مع محتوى نصي محدود. قد تكون وثيقة ممسوحة ضوئياً.`
+        : `${metadata.fileType} document (${metadata.filename}) with limited text content. May be a scanned document.`;
     }
 
     // Extract first few sentences as a summary
