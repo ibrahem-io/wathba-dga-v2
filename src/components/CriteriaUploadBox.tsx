@@ -1,7 +1,6 @@
 import React, { useState, useCallback } from 'react';
-import { Upload, File, X, AlertCircle, CheckCircle, XCircle, Brain, Loader } from 'lucide-react';
-import { analyzeDocumentForCriteria } from '../services/openaiService';
-import { extractTextFromFile } from '../utils/fileExtractor';
+import { Upload, File, X, AlertCircle, CheckCircle, XCircle, Brain, Loader, Users } from 'lucide-react';
+import { langchainService } from '../services/langchainService';
 
 interface CriteriaAnalysis {
   score: number;
@@ -36,6 +35,7 @@ export default function CriteriaUploadBox({
   const [analysis, setAnalysis] = useState<CriteriaAnalysis | null>(null);
   const [error, setError] = useState<string>('');
   const [dragActive, setDragActive] = useState(false);
+  const [analysisProgress, setAnalysisProgress] = useState<string>('');
 
   const handleDrag = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -98,41 +98,37 @@ export default function CriteriaUploadBox({
 
     setIsAnalyzing(true);
     setError('');
+    setAnalysisProgress(language === 'ar' ? 'بدء التحليل...' : 'Starting analysis...');
 
     try {
-      // Extract text from all files
-      const extractedTexts = await Promise.all(
-        files.map(file => extractTextFromFile(file))
-      );
-
-      // Combine all text content
-      let combinedText = extractedTexts.join('\n\n');
+      // For multiple files, analyze the first one (or combine them in a more sophisticated way)
+      const primaryFile = files[0];
       
-      // Limit combined text to 80,000 characters to ensure we stay well under OpenAI's token limit
-      // This accounts for the system prompt and other overhead
-      const maxCombinedLength = 80000;
-      if (combinedText.length > maxCombinedLength) {
-        combinedText = combinedText.substring(0, maxCombinedLength) + '\n\n[Text truncated due to length...]';
-      }
+      setAnalysisProgress(language === 'ar' ? 'تحليل الوثيقة بواسطة الوكلاء الذكيين...' : 'Analyzing document with smart agents...');
 
-      if (!combinedText || combinedText.trim().length < 50) {
-        throw new Error(language === 'ar' 
-          ? 'لم يتم العثور على نص كافٍ في الملفات للتحليل'
-          : 'Insufficient text found in files for analysis');
-      }
-
-      // Analyze against specific criteria
-      const result = await analyzeDocumentForCriteria(combinedText, criteriaId, language);
+      const result = await langchainService.analyzeCriteria(primaryFile, criteriaId, language);
       
-      setAnalysis(result);
-      onAnalysisComplete(criteriaId, result);
+      // Convert LangChain result to expected format
+      const analysis: CriteriaAnalysis = {
+        score: result.score,
+        status: result.status,
+        confidence: result.confidence,
+        evidence: result.evidence.map(e => e.text),
+        findings: result.findings,
+        recommendations: result.recommendations
+      };
+
+      setAnalysis(analysis);
+      onAnalysisComplete(criteriaId, analysis);
+      setAnalysisProgress(language === 'ar' ? 'اكتمل التحليل بنجاح!' : 'Analysis completed successfully!');
 
     } catch (error) {
-      console.error('Analysis error:', error);
+      console.error('LangChain analysis error:', error);
       setError(error instanceof Error ? error.message : 
         (language === 'ar' 
           ? 'حدث خطأ أثناء تحليل الملفات'
           : 'An error occurred while analyzing the files'));
+      setAnalysisProgress('');
     } finally {
       setIsAnalyzing(false);
     }
@@ -145,6 +141,7 @@ export default function CriteriaUploadBox({
     if (newFiles.length === 0) {
       setAnalysis(null);
       setError('');
+      setAnalysisProgress('');
     } else {
       analyzeFiles(newFiles);
     }
@@ -302,20 +299,34 @@ export default function CriteriaUploadBox({
       {/* Analysis Status */}
       {isAnalyzing && (
         <div className={`mt-4 p-3 bg-blue-50 rounded-lg flex items-center space-x-2 ${language === 'ar' ? 'space-x-reverse' : ''}`}>
-          <Loader className="w-5 h-5 text-blue-600 animate-spin" />
-          <span className="text-blue-700 text-sm">
-            {language === 'ar' ? 'جاري تحليل الملفات بالذكاء الاصطناعي...' : 'Analyzing files with AI...'}
-          </span>
+          <div className="flex items-center space-x-2">
+            <Loader className="w-5 h-5 text-blue-600 animate-spin" />
+            <Users className="w-4 h-4 text-purple-600" />
+          </div>
+          <div className="flex-1">
+            <span className="text-blue-700 text-sm font-medium">
+              {language === 'ar' ? 'تحليل متعدد الوكلاء' : 'Multi-Agent Analysis'}
+            </span>
+            <p className="text-xs text-blue-600 mt-1">{analysisProgress}</p>
+          </div>
         </div>
       )}
 
       {/* Analysis Results */}
       {analysis && !isAnalyzing && (
         <div className="mt-4 space-y-3">
+          {/* Multi-Agent Badge */}
+          <div className={`flex items-center space-x-2 ${language === 'ar' ? 'space-x-reverse' : ''}`}>
+            <Users className="w-4 h-4 text-purple-500" />
+            <span className="text-xs text-purple-600 font-medium">
+              {language === 'ar' ? 'تحليل بواسطة الوكلاء الذكيين' : 'Multi-Agent Analysis'}
+            </span>
+          </div>
+
           {/* Confidence Score */}
           <div className={`flex items-center justify-between ${language === 'ar' ? 'flex-row-reverse' : ''}`}>
             <span className="text-sm text-gray-600">
-              {language === 'ar' ? 'ثقة الذكاء الاصطناعي:' : 'AI Confidence:'}
+              {language === 'ar' ? 'ثقة النظام:' : 'System Confidence:'}
             </span>
             <div className={`flex items-center space-x-1 ${language === 'ar' ? 'space-x-reverse' : ''}`}>
               <Brain className="w-4 h-4 text-purple-500" />
