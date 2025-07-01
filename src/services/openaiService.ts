@@ -335,7 +335,7 @@ Return a JSON response with this structure:
     }
 
     const response = await openai.chat.completions.create({
-      model: "gpt-4-turbo-preview",
+      model: "gpt-4o", // Updated to latest model
       messages: [
         {
           role: "system",
@@ -408,7 +408,7 @@ export async function analyzeDocument(documentText: string, language: 'ar' | 'en
     const prompt = language === 'ar' ? DGA_STANDARD_PROMPT_AR : DGA_STANDARD_PROMPT_EN;
     
     const response = await openai.chat.completions.create({
-      model: "gpt-4-turbo-preview",
+      model: "gpt-4o", // Updated to latest model
       messages: [
         {
           role: "system",
