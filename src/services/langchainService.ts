@@ -145,7 +145,13 @@ export class LangChainAuditService {
       }
 
       const metadata: DocumentMetadata = parseResult.data;
-      console.log(`Document parsed: ${metadata.filename} (${metadata.language}, ${metadata.wordCount} words)`);
+      console.log(`Document parsed: ${metadata.filename} (${metadata.language}, ${metadata.wordCount} words, confidence: ${metadata.confidence}%)`);
+
+      // Check if we have meaningful content
+      if (metadata.wordCount === 0 || metadata.extractedText.trim().length < 10) {
+        console.warn(`Document appears to have no meaningful content: ${metadata.filename}`);
+        return this.createEmptyDocumentScore(criteriaId, language, metadata);
+      }
 
       // Extract evidence
       const evidenceResult = await this.agentManager.executeTask('evidence_extractor', {
@@ -155,7 +161,8 @@ export class LangChainAuditService {
       }, 2);
 
       const evidence: Evidence[] = evidenceResult.success ? evidenceResult.data : [];
-      console.log(`Evidence extracted: ${evidence.length} pieces found`);
+      console.log(`Evidence extracted: ${evidence.length} pieces found with relevance scores:`, 
+        evidence.map(e => `${Math.round(e.relevance * 100)}%`));
 
       // Score compliance
       const scoringResult = await this.agentManager.executeTask('compliance_scorer', {
@@ -166,81 +173,47 @@ export class LangChainAuditService {
       }, 3);
 
       if (!scoringResult.success) {
-        console.warn(`Compliance scoring failed, using fallback: ${scoringResult.error}`);
-        // Return fallback score instead of throwing error
-        return this.createFallbackScore(criteriaId, evidence, language, metadata);
+        console.error(`Compliance scoring failed for ${criteriaId}: ${scoringResult.error}`);
+        throw new Error(`Scoring failed: ${scoringResult.error}`);
       }
 
-      console.log(`Criteria analysis completed for ${criteriaId}`);
-      return scoringResult.data;
+      const result = scoringResult.data;
+      console.log(`Criteria analysis completed for ${criteriaId}: ${result.status} (${result.score}%, confidence: ${result.confidence}%)`);
+      return result;
 
     } catch (error) {
       console.error(`Criteria analysis failed for ${criteriaId}:`, error);
-      
-      // Return a meaningful fallback instead of throwing
-      return this.createFallbackScore(criteriaId, [], language, {
-        filename: file.name,
-        fileType: file.type,
-        fileSize: file.size,
-        language,
-        extractedText: '',
-        wordCount: 0,
-        confidence: 50
-      });
+      throw error; // Re-throw to let the UI handle the error properly
     }
   }
 
-  private createFallbackScore(
+  private createEmptyDocumentScore(
     criteriaId: string, 
-    evidence: Evidence[], 
     language: 'ar' | 'en',
     metadata: DocumentMetadata
   ): ComplianceScore {
-    const evidenceCount = evidence.length;
-    const avgRelevance = evidence.length > 0 
-      ? evidence.reduce((sum, e) => sum + e.relevance, 0) / evidence.length 
-      : 0;
-
-    let score = 0;
-    let status: 'pass' | 'fail' | 'partial' = 'fail';
-
-    if (evidenceCount >= 3 && avgRelevance > 0.7) {
-      score = 75;
-      status = 'pass';
-    } else if (evidenceCount >= 1 && avgRelevance > 0.5) {
-      score = 55;
-      status = 'partial';
-    } else if (metadata.wordCount > 100) {
-      // Give some credit for having content
-      score = 30;
-      status = 'partial';
-    } else {
-      score = 15;
-      status = 'fail';
-    }
-
     const findings = language === 'ar' 
-      ? `تم تحليل الوثيقة "${metadata.filename}" وعثر على ${evidenceCount} دليل. التقييم الآلي بسبب عدم توفر التحليل المتقدم. عدد الكلمات: ${metadata.wordCount}.`
-      : `Analyzed document "${metadata.filename}" and found ${evidenceCount} evidence pieces. Automated assessment due to unavailable advanced analysis. Word count: ${metadata.wordCount}.`;
+      ? `لا يمكن تحليل الوثيقة "${metadata.filename}" بسبب عدم وجود محتوى نصي كافٍ. قد تكون الوثيقة فارغة أو تحتوي على صور فقط أو تحتاج إلى تحويل إلى تنسيق نصي.`
+      : `Cannot analyze document "${metadata.filename}" due to insufficient text content. The document may be empty, contain only images, or need conversion to text format.`;
 
     const recommendations = language === 'ar' 
       ? [
-          'تحسين توثيق الأنشطة المتعلقة بالمتطلب',
-          'إضافة تفاصيل أكثر حول التطبيق العملي',
-          'تطوير آليات القياس والمتابعة'
+          'تأكد من أن الوثيقة تحتوي على نص قابل للقراءة',
+          'تحقق من تنسيق الملف وجودة المسح الضوئي',
+          'أعد رفع الوثيقة بتنسيق مختلف إذا أمكن'
         ]
       : [
-          'Improve documentation of requirement-related activities',
-          'Add more details about practical implementation',
-          'Develop measurement and monitoring mechanisms'
+          'Ensure the document contains readable text',
+          'Check file format and scan quality',
+          'Re-upload the document in a different format if possible'
         ];
 
     return {
       criteriaId,
-      score,
-      status,
-      confidence: 70,
-      evidence,
+      score: 0,
+      status: 'fail',
+      confidence: 95, // High confidence that there's no content
+      evidence: [],
       findings,
       recommendations
     };
