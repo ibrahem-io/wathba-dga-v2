@@ -78,7 +78,7 @@ export class ComplianceScorerAgent extends BaseAgent {
       'image/webp'
     ];
     
-    return imageTypes.includes(metadata.fileType);
+    return imageTypes.includes(metadata.fileType) && metadata.isVisualDocument;
   }
 
   private async analyzeWithVision(
@@ -177,15 +177,25 @@ Important instructions for visual analysis:
 
     const systemPrompt = this.getDetailedAuditPrompt(criteriaId, language);
 
-    // Handle special case where document was marked for Vision API but we're using text analysis
+    // Handle special cases where document has limited text content
     let textToAnalyze = metadata.extractedText;
-    if (textToAnalyze === '[VISUAL_DOCUMENT_FOR_VISION_API]' || textToAnalyze.trim().length < 20) {
+    let analysisNote = '';
+
+    if (textToAnalyze === '[IMAGE_FILE_FOR_VISION_API]') {
+      // This shouldn't happen in text analysis, but handle it gracefully
+      const fallbackMessage = language === 'ar' 
+        ? `هذا ملف صورة (${metadata.filename}) يجب معالجته بـ Vision API.`
+        : `This is an image file (${metadata.filename}) that should be processed with Vision API.`;
+      textToAnalyze = fallbackMessage;
+      analysisNote = language === 'ar' ? 'ملف صورة' : 'Image file';
+    } else if (textToAnalyze === '[PDF_WITH_LIMITED_TEXT_CONTENT]' || textToAnalyze.trim().length < 20) {
       // For PDFs that couldn't be text-extracted, provide a helpful message
       const fallbackMessage = language === 'ar' 
-        ? `هذه وثيقة PDF (${metadata.filename}) لم يتم استخراج نص كافٍ منها. قد تكون وثيقة ممسوحة ضوئياً أو تحتوي على صور. يرجى تحليل المحتوى بناءً على نوع الملف والسياق المتاح.`
-        : `This is a PDF document (${metadata.filename}) with insufficient text extraction. It may be a scanned document or contain images. Please analyze based on file type and available context.`;
+        ? `هذه وثيقة PDF (${metadata.filename}) مع محتوى نصي محدود. قد تكون وثيقة ممسوحة ضوئياً أو تحتوي على صور بشكل أساسي. يرجى تحليل المحتوى بناءً على نوع الملف والسياق المتاح والأدلة المستخرجة.`
+        : `This is a PDF document (${metadata.filename}) with limited text content. It may be a scanned document or primarily contain images. Please analyze based on file type, available context, and extracted evidence.`;
       
       textToAnalyze = fallbackMessage;
+      analysisNote = language === 'ar' ? 'PDF مع محتوى محدود' : 'PDF with limited content';
     }
 
     // Limit text to prevent token overflow but keep more content for better analysis
@@ -205,6 +215,7 @@ Important instructions for visual analysis:
 اللغة المكتشفة: ${metadata.language}
 عدد الكلمات: ${metadata.wordCount}
 ثقة الاستخراج: ${metadata.confidence}%
+${analysisNote ? `ملاحظة: ${analysisNote}` : ''}
 
 الأدلة المستخرجة:
 ${evidenceText}
@@ -220,12 +231,14 @@ ${textToAnalyze}
 3. كن متساهلاً في التقييم - أي إشارة للموضوع تعتبر إيجابية
 4. إذا كان النص محدود، ركز على نوع الوثيقة والسياق المتاح
 5. قدم تحليلاً مفصلاً حتى لو كانت الأدلة محدودة
+6. استخدم الأدلة المستخرجة كمرجع إضافي
 ` : `
 Document: ${metadata.filename}
 File Type: ${metadata.fileType}
 Detected Language: ${metadata.language}
 Word Count: ${metadata.wordCount}
 Extraction Confidence: ${metadata.confidence}%
+${analysisNote ? `Note: ${analysisNote}` : ''}
 
 Extracted Evidence:
 ${evidenceText}
@@ -241,6 +254,7 @@ Important instructions:
 3. Be lenient in evaluation - any reference to the topic counts as positive
 4. If text is limited, focus on document type and available context
 5. Provide detailed analysis even if evidence is limited
+6. Use extracted evidence as additional reference
 `;
 
     const messages = [
@@ -711,10 +725,10 @@ Return JSON response only:
         : `Image (${metadata.fileType}) analyzed using AI Vision technology. File: ${metadata.filename}`;
     }
     
-    if (!text || text.trim().length < 10 || text === '[VISUAL_DOCUMENT_FOR_VISION_API]') {
+    if (!text || text.trim().length < 10 || text === '[IMAGE_FILE_FOR_VISION_API]' || text === '[PDF_WITH_LIMITED_TEXT_CONTENT]') {
       return language === 'ar' 
-        ? `وثيقة PDF (${metadata.filename}) مع محتوى نصي محدود. قد تكون وثيقة ممسوحة ضوئياً أو تحتوي على صور.`
-        : `PDF document (${metadata.filename}) with limited text content. May be a scanned document or contain images.`;
+        ? `وثيقة ${metadata.fileType} (${metadata.filename}) مع محتوى نصي محدود. قد تكون وثيقة ممسوحة ضوئياً أو تحتوي على صور.`
+        : `${metadata.fileType} document (${metadata.filename}) with limited text content. May be a scanned document or contain images.`;
     }
 
     // Extract first few sentences as a summary

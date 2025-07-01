@@ -104,19 +104,19 @@ async function extractTextFromPDF(arrayBuffer: ArrayBuffer, file: File): Promise
     const manualText = await extractPDFTextManual(arrayBuffer);
     const cleanedText = cleanArabicText(manualText);
     
-    if (cleanedText.length >= 20) { // Lower threshold for better compatibility
+    if (cleanedText.length >= 50) { // More reasonable threshold
       console.log(`✅ Manual extraction succeeded: ${cleanedText.length} characters`);
       return cleanedText.substring(0, 50000);
     }
     
     // If manual extraction fails, return a placeholder that indicates limited content
     console.log(`⚠️ Manual extraction insufficient (${cleanedText.length} characters). Document may be image-based or have limited text.`);
-    return `[LIMITED_TEXT_CONTENT]`;
+    return `[PDF_WITH_LIMITED_TEXT_CONTENT]`;
     
   } catch (error) {
     console.error('PDF extraction failed:', error);
     // Return placeholder for limited content
-    return `[LIMITED_TEXT_CONTENT]`;
+    return `[PDF_WITH_LIMITED_TEXT_CONTENT]`;
   }
 }
 

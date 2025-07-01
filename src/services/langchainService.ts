@@ -147,13 +147,17 @@ export class LangChainAuditService {
       const metadata: DocumentMetadata = parseResult.data;
       console.log(`Document parsed: ${metadata.filename} (${metadata.language}, ${metadata.wordCount} words, confidence: ${metadata.confidence}%)`);
 
-      // Check if we have meaningful content
-      if (metadata.wordCount === 0 || metadata.extractedText.trim().length < 10) {
+      // Check if we have meaningful content or if it's a special case
+      if (metadata.extractedText === '[IMAGE_FILE_FOR_VISION_API]') {
+        console.log(`Image file detected: ${metadata.filename} - will use Vision API`);
+      } else if (metadata.extractedText === '[PDF_WITH_LIMITED_TEXT_CONTENT]') {
+        console.log(`PDF with limited text content: ${metadata.filename} - will analyze with available context`);
+      } else if (metadata.wordCount === 0 || metadata.extractedText.trim().length < 10) {
         console.warn(`Document appears to have no meaningful content: ${metadata.filename}`);
         return this.createEmptyDocumentScore(criteriaId, language, metadata);
       }
 
-      // Extract evidence
+      // Extract evidence (this will work even with limited text content)
       const evidenceResult = await this.agentManager.executeTask('evidence_extractor', {
         documentMetadata: metadata,
         criteriaId,

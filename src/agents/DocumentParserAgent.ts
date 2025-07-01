@@ -16,72 +16,66 @@ export class DocumentParserAgent extends BaseAgent {
     const { file } = input;
 
     try {
-      console.log(`🔍 Starting enhanced document parsing for: ${file.name} (${file.type}, ${this.formatFileSize(file.size)})`);
+      console.log(`🔍 Starting document parsing for: ${file.name} (${file.type}, ${this.formatFileSize(file.size)})`);
 
       // Check if this is a visual document that should use Vision API
       const isVisual = isVisualDocument(file);
-      console.log(`📄 Document type: ${isVisual ? 'Visual (will use Vision API)' : 'Text-based'}`);
+      console.log(`📄 Document type: ${isVisual ? 'Image (will use Vision API)' : 'Text-based'}`);
 
       let extractedText = '';
       let base64Image: string | undefined;
       let confidence = 70;
 
       if (isVisual) {
-        // For visual documents, convert to base64 for Vision API
+        // For image documents, convert to base64 for Vision API
         try {
           base64Image = await fileToBase64(file);
-          console.log(`📷 Converted to base64 for Vision API: ${base64Image.length} characters`);
+          console.log(`📷 Converted image to base64: ${base64Image.length} characters`);
           
-          // Try to extract text first, but don't fail if it doesn't work
-          try {
-            extractedText = await this.createErrorBoundary(
-              () => extractTextFromFile(file),
-              ''
-            );
-            
-            // If we got meaningful text, use it; otherwise rely on Vision API
-            if (extractedText && extractedText.trim().length > 50 && !extractedText.includes('[VISUAL_DOCUMENT_FOR_VISION_API]')) {
-              console.log(`📄 Text extraction successful: ${extractedText.length} characters`);
-              confidence = 80;
-            } else {
-              console.log(`📷 Text extraction insufficient, will rely on Vision API`);
-              extractedText = `[VISUAL_DOCUMENT_FOR_VISION_API]`;
-              confidence = 85; // High confidence for Vision API processing
-            }
-          } catch (textError) {
-            console.log(`📷 Text extraction failed, will use Vision API only:`, textError);
-            extractedText = `[VISUAL_DOCUMENT_FOR_VISION_API]`;
-            confidence = 85;
-          }
+          // For images, we don't extract text locally - Vision API will handle it
+          extractedText = '[IMAGE_FILE_FOR_VISION_API]';
+          confidence = 90; // High confidence for Vision API processing
+          
         } catch (error) {
-          console.warn(`⚠️ Failed to convert visual document to base64:`, error);
-          throw new Error(`Failed to process visual document: ${error instanceof Error ? error.message : 'Unknown error'}`);
+          console.warn(`⚠️ Failed to convert image to base64:`, error);
+          throw new Error(`Failed to process image file: ${error instanceof Error ? error.message : 'Unknown error'}`);
         }
       } else {
-        // For text-based documents (DOCX, TXT), use traditional extraction
-        extractedText = await this.createErrorBoundary(
-          () => extractTextFromFile(file),
-          ''
-        );
-        console.log(`📄 Text extraction completed: ${extractedText.length} characters extracted`);
-        
-        // Validate text content for non-visual documents
-        if (!extractedText || extractedText.trim().length < 10) {
-          throw new Error(`Insufficient text content extracted from ${file.name}. The document may be empty, corrupted, or in an unsupported format.`);
+        // For text-based documents (DOCX, TXT, PDF), use traditional extraction
+        try {
+          extractedText = await extractTextFromFile(file);
+          console.log(`📄 Text extraction completed: ${extractedText.length} characters extracted`);
+          
+          // Validate text content for non-visual documents
+          if (!extractedText || extractedText.trim().length < 10) {
+            console.warn(`⚠️ Insufficient text content extracted from ${file.name}`);
+            
+            // For PDFs that failed text extraction, still proceed but with low confidence
+            if (file.type === 'application/pdf') {
+              extractedText = `[PDF_WITH_LIMITED_TEXT_CONTENT]`;
+              confidence = 40;
+            } else {
+              throw new Error(`Insufficient text content extracted from ${file.name}. The document may be empty, corrupted, or in an unsupported format.`);
+            }
+          } else {
+            confidence = this.calculateExtractionConfidence(extractedText, file, detectLanguage(extractedText));
+          }
+        } catch (error) {
+          console.error(`❌ Text extraction failed for ${file.name}:`, error);
+          throw error;
         }
       }
 
-      // Detect language (for visual documents with placeholder text, default to Arabic)
-      const language = (extractedText === '[VISUAL_DOCUMENT_FOR_VISION_API]') ? 'ar' : detectLanguage(extractedText);
+      // Detect language (for images with placeholder text, default to Arabic)
+      const language = (extractedText === '[IMAGE_FILE_FOR_VISION_API]' || extractedText === '[PDF_WITH_LIMITED_TEXT_CONTENT]') 
+        ? 'ar' 
+        : detectLanguage(extractedText);
       console.log(`🌐 Language detected: ${language}`);
 
-      // Calculate word count (for visual documents with placeholder, set to 0)
-      const wordCount = (extractedText === '[VISUAL_DOCUMENT_FOR_VISION_API]') ? 0 : this.calculateWordCount(extractedText, language);
-
-      // Calculate extraction confidence
-      if (!isVisual && extractedText !== '[VISUAL_DOCUMENT_FOR_VISION_API]') {
-        confidence = this.calculateExtractionConfidence(extractedText, file, language);
-      }
+      // Calculate word count (for images and limited PDFs with placeholder, set to 0)
+      const wordCount = (extractedText === '[IMAGE_FILE_FOR_VISION_API]' || extractedText === '[PDF_WITH_LIMITED_TEXT_CONTENT]') 
+        ? 0 
+        : this.calculateWordCount(extractedText, language);
 
       const metadata: DocumentMetadata = {
         filename: file.name,
@@ -96,7 +90,7 @@ export class DocumentParserAgent extends BaseAgent {
       };
 
       console.log(`✅ Document parsed successfully: ${file.name}
-        - Type: ${isVisual ? 'Visual (Vision API)' : 'Text-based'}
+        - Type: ${isVisual ? 'Image (Vision API)' : 'Text-based'}
         - Language: ${language}
         - Words: ${wordCount}
         - Confidence: ${confidence}%
@@ -112,8 +106,8 @@ export class DocumentParserAgent extends BaseAgent {
       let errorMessage = 'Failed to parse document';
       
       if (error instanceof Error) {
-        if (error.message.includes('Vision API')) {
-          errorMessage = `Vision API processing failed: ${error.message}. Please ensure the image contains clear, readable text.`;
+        if (error.message.includes('base64')) {
+          errorMessage = `Image processing failed: ${error.message}. Please ensure the image is not corrupted and try again.`;
         } else if (error.message.includes('Insufficient text')) {
           errorMessage = `Document content issue: ${error.message}`;
         } else if (error.message.includes('PDF extraction failed')) {
@@ -185,11 +179,6 @@ export class DocumentParserAgent extends BaseAgent {
       confidence -= 10;
     }
 
-    // Special handling for image files (will use Vision API)
-    if (file.type.startsWith('image/')) {
-      confidence = 85; // High confidence for Vision API
-    }
-
     return Math.min(95, Math.max(50, confidence));
   }
 
@@ -198,11 +187,11 @@ export class DocumentParserAgent extends BaseAgent {
       'text/plain': 15,
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 10,
       'application/pdf': 5,
-      'image/jpeg': 10, // Higher bonus for Vision API
-      'image/png': 10,
-      'image/tiff': 12,
-      'image/bmp': 8,
-      'image/webp': 10
+      'image/jpeg': 15, // Higher bonus for Vision API
+      'image/png': 15,
+      'image/tiff': 15,
+      'image/bmp': 10,
+      'image/webp': 15
     };
 
     return bonuses[fileType] || 0;
