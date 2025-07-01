@@ -60,7 +60,7 @@ export class ComplianceScorerAgent extends BaseAgent {
       console.log(`Scoring compliance for criteria ${criteriaId} with ${evidence.length} evidence pieces`);
       
       const response = await this.llm.invoke(messages);
-      const result = this.parseResponse(response.content as string, criteriaId, evidence);
+      const result = this.parseResponse(response.content as string, criteriaId, evidence, documentMetadata);
 
       console.log(`Compliance scoring completed for criteria ${criteriaId}: ${result.status} (${result.score}%)`);
       return result;
@@ -124,7 +124,7 @@ Analyze this text for any evidence of compliance with requirement ${criteriaId} 
     ];
 
     const response = await this.llm.invoke(messages);
-    return this.parseResponse(response.content as string, criteriaId, []);
+    return this.parseResponse(response.content as string, criteriaId, [], metadata);
   }
 
   private getDetailedAuditPrompt(criteriaId: string, language: 'ar' | 'en'): string {
@@ -190,7 +190,8 @@ Analyze this text for any evidence of compliance with requirement ${criteriaId} 
   "status": "pass" | "fail" | "partial",
   "confidence": number (70-95),
   "findings": "تحليل مفصل يوضح ما تم العثور عليه مع ربطه بالمتطلبات المحددة",
-  "recommendations": ["توصية محددة 1", "توصية محددة 2", "توصية محددة 3"]
+  "recommendations": ["توصية محددة 1", "توصية محددة 2", "توصية محددة 3"],
+  "documentContent": "ملخص للمحتوى الفعلي الموجود في الوثيقة والذي تم تحليله"
 }`,
         en: `You are an expert auditor specialized in evaluating requirement 5.4.1: "Preparing Studies and Programs for Enhancing Digital Culture and Environment"
 
@@ -252,7 +253,8 @@ Return JSON response only:
   "status": "pass" | "fail" | "partial",
   "confidence": number (70-95),
   "findings": "detailed analysis explaining what was found linked to specific requirements",
-  "recommendations": ["specific recommendation 1", "specific recommendation 2", "specific recommendation 3"]
+  "recommendations": ["specific recommendation 1", "specific recommendation 2", "specific recommendation 3"],
+  "documentContent": "summary of actual content found in the document that was analyzed"
 }`
       },
       '5.4.2': {
@@ -317,7 +319,8 @@ Return JSON response only:
   "status": "pass" | "fail" | "partial",
   "confidence": number (70-95),
   "findings": "تحليل مفصل مع ربط الأدلة بالمتطلبات المحددة",
-  "recommendations": ["توصية محددة 1", "توصية محددة 2", "توصية محددة 3"]
+  "recommendations": ["توصية محددة 1", "توصية محددة 2", "توصية محددة 3"],
+  "documentContent": "ملخص للمحتوى الفعلي الموجود في الوثيقة والذي تم تحليله"
 }`,
         en: `You are an expert auditor specialized in evaluating requirement 5.4.2: "Implementing Digital Transformation Awareness Programs and Measuring Their Impact"
 
@@ -380,7 +383,8 @@ Return JSON response only:
   "status": "pass" | "fail" | "partial",
   "confidence": number (70-95),
   "findings": "detailed analysis linking evidence to specific requirements",
-  "recommendations": ["specific recommendation 1", "specific recommendation 2", "specific recommendation 3"]
+  "recommendations": ["specific recommendation 1", "specific recommendation 2", "specific recommendation 3"],
+  "documentContent": "summary of actual content found in the document that was analyzed"
 }`
       },
       '5.4.3': {
@@ -431,7 +435,8 @@ Return JSON response only:
   "status": "pass" | "fail" | "partial",
   "confidence": number (70-95),
   "findings": "تحليل مفصل مع ربط الأدلة بالمتطلبات المحددة",
-  "recommendations": ["توصية محددة 1", "توصية محددة 2", "توصية محددة 3"]
+  "recommendations": ["توصية محددة 1", "توصية محددة 2", "توصية محددة 3"],
+  "documentContent": "ملخص للمحتوى الفعلي الموجود في الوثيقة والذي تم تحليله"
 }`,
         en: `You are an expert auditor specialized in evaluating requirement 5.4.3: "Using Technical Tools to Assist in Entity Operations"
 
@@ -480,7 +485,8 @@ Return JSON response only:
   "status": "pass" | "fail" | "partial",
   "confidence": number (70-95),
   "findings": "detailed analysis linking evidence to specific requirements",
-  "recommendations": ["specific recommendation 1", "specific recommendation 2", "specific recommendation 3"]
+  "recommendations": ["specific recommendation 1", "specific recommendation 2", "specific recommendation 3"],
+  "documentContent": "summary of actual content found in the document that was analyzed"
 }`
       },
       '5.4.4': {
@@ -535,7 +541,8 @@ Return JSON response only:
   "status": "pass" | "fail" | "partial",
   "confidence": number (70-95),
   "findings": "تحليل مفصل مع ربط الأدلة بالمتطلبات المحددة",
-  "recommendations": ["توصية محددة 1", "توصية محددة 2", "توصية محددة 3"]
+  "recommendations": ["توصية محددة 1", "توصية محددة 2", "توصية محددة 3"],
+  "documentContent": "ملخص للمحتوى الفعلي الموجود في الوثيقة والذي تم تحليله"
 }`,
         en: `You are an expert auditor specialized in evaluating requirement 5.4.4: "Continuous Development of Digital Culture"
 
@@ -588,7 +595,8 @@ Return JSON response only:
   "status": "pass" | "fail" | "partial",
   "confidence": number (70-95),
   "findings": "detailed analysis linking evidence to specific requirements",
-  "recommendations": ["specific recommendation 1", "specific recommendation 2", "specific recommendation 3"]
+  "recommendations": ["specific recommendation 1", "specific recommendation 2", "specific recommendation 3"],
+  "documentContent": "summary of actual content found in the document that was analyzed"
 }`
       }
     };
@@ -610,7 +618,8 @@ Return JSON response only:
   "status": "pass" | "fail" | "partial",
   "confidence": number (70-95),
   "findings": "تحليل مفصل",
-  "recommendations": ["توصية 1", "توصية 2", "توصية 3"]
+  "recommendations": ["توصية 1", "توصية 2", "توصية 3"],
+  "documentContent": "ملخص للمحتوى الفعلي الموجود في الوثيقة"
 }
 ` : `
 You are an expert auditor specialized in evaluating Saudi Arabia's Digital Governance Authority standards.
@@ -625,7 +634,8 @@ Return JSON response only:
   "status": "pass" | "fail" | "partial",
   "confidence": number (70-95),
   "findings": "detailed analysis",
-  "recommendations": ["recommendation 1", "recommendation 2", "recommendation 3"]
+  "recommendations": ["recommendation 1", "recommendation 2", "recommendation 3"],
+  "documentContent": "summary of actual content found in the document"
 }
 `;
   }
@@ -642,11 +652,20 @@ Return JSON response only:
       ? evidence.map((e, i) => `${i + 1}. ${e.text} (${language === 'ar' ? 'الصلة' : 'Relevance'}: ${Math.round(e.relevance * 100)}%)`).join('\n')
       : (language === 'ar' ? 'لا توجد أدلة مباشرة' : 'No direct evidence found');
 
+    // Include a sample of the document content for context
+    const maxSampleLength = 2000;
+    const documentSample = metadata.extractedText.length > maxSampleLength 
+      ? metadata.extractedText.substring(0, maxSampleLength) + '...'
+      : metadata.extractedText;
+
     const userPrompt = language === 'ar' ? `
 الوثيقة: ${metadata.filename}
 اللغة: ${metadata.language}
 عدد الكلمات: ${metadata.wordCount}
 ثقة الاستخراج: ${metadata.confidence}%
+
+عينة من محتوى الوثيقة:
+${documentSample}
 
 الأدلة المستخرجة:
 ${evidenceText}
@@ -657,6 +676,9 @@ Document: ${metadata.filename}
 Language: ${metadata.language}
 Word Count: ${metadata.wordCount}
 Extraction Confidence: ${metadata.confidence}%
+
+Document Content Sample:
+${documentSample}
 
 Extracted Evidence:
 ${evidenceText}
@@ -670,7 +692,7 @@ Evaluate compliance for requirement ${criteriaId} according to the detailed guid
     };
   }
 
-  private parseResponse(content: string, criteriaId: string, evidence: Evidence[]): ComplianceScore {
+  private parseResponse(content: string, criteriaId: string, evidence: Evidence[], metadata: DocumentMetadata): ComplianceScore {
     try {
       // Clean the content by removing markdown code block delimiters
       let cleanedContent = content.trim();
@@ -698,13 +720,45 @@ Evaluate compliance for requirement ${criteriaId} according to the detailed guid
         confidence: Math.max(70, Math.min(95, parsed.confidence || 75)),
         evidence,
         findings: parsed.findings || 'No detailed findings available',
-        recommendations: Array.isArray(parsed.recommendations) ? parsed.recommendations.slice(0, 5) : []
+        recommendations: Array.isArray(parsed.recommendations) ? parsed.recommendations.slice(0, 5) : [],
+        documentContent: parsed.documentContent || this.generateDocumentContentSummary(metadata)
       };
     } catch (error) {
       console.error('Failed to parse LLM response:', error);
       console.log('Raw response:', content);
       throw new Error(`Failed to parse LLM response: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
+  }
+
+  private generateDocumentContentSummary(metadata: DocumentMetadata): string {
+    const text = metadata.extractedText;
+    const language = metadata.language;
+    
+    if (!text || text.trim().length < 10) {
+      return language === 'ar' 
+        ? 'لا يوجد محتوى نصي كافٍ في الوثيقة للتحليل'
+        : 'Insufficient text content in document for analysis';
+    }
+
+    // Extract first few sentences as a summary
+    const sentences = text.split(/[.!?؟]/);
+    const meaningfulSentences = sentences
+      .filter(s => s.trim().length > 20)
+      .slice(0, 3)
+      .map(s => s.trim());
+
+    if (meaningfulSentences.length === 0) {
+      return language === 'ar'
+        ? `الوثيقة تحتوي على ${metadata.wordCount} كلمة لكن النص غير واضح أو مجزأ`
+        : `Document contains ${metadata.wordCount} words but text is unclear or fragmented`;
+    }
+
+    const summary = meaningfulSentences.join('. ');
+    const prefix = language === 'ar' 
+      ? `الوثيقة تحتوي على ${metadata.wordCount} كلمة. المحتوى الرئيسي: `
+      : `Document contains ${metadata.wordCount} words. Main content: `;
+
+    return prefix + summary.substring(0, 300) + (summary.length > 300 ? '...' : '');
   }
 
   private createFallbackScore(
@@ -762,7 +816,8 @@ Evaluate compliance for requirement ${criteriaId} according to the detailed guid
       confidence: 70,
       evidence,
       findings,
-      recommendations
+      recommendations,
+      documentContent: this.generateDocumentContentSummary(metadata)
     };
   }
 }

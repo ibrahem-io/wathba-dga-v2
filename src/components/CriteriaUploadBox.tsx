@@ -1,5 +1,5 @@
 import React, { useState, useCallback } from 'react';
-import { Upload, File, X, AlertCircle, CheckCircle, XCircle, Brain, Loader, Users } from 'lucide-react';
+import { Upload, File, X, AlertCircle, CheckCircle, XCircle, Brain, Loader, Users, FileText } from 'lucide-react';
 import { langchainService } from '../services/langchainService';
 
 interface CriteriaAnalysis {
@@ -9,6 +9,7 @@ interface CriteriaAnalysis {
   evidence: string[];
   findings: string;
   recommendations: string[];
+  documentContent?: string; // New field for actual document content
 }
 
 interface CriteriaUploadBoxProps {
@@ -119,7 +120,8 @@ export default function CriteriaUploadBox({
         confidence: result.confidence,
         evidence: result.evidence.map(e => e.text),
         findings: result.findings,
-        recommendations: result.recommendations
+        recommendations: result.recommendations,
+        documentContent: result.documentContent // Include the new document content field
       };
 
       setAnalysis(analysis);
@@ -346,6 +348,19 @@ export default function CriteriaUploadBox({
               <span className="text-sm font-medium text-purple-600">{analysis.confidence}%</span>
             </div>
           </div>
+
+          {/* Document Content Found */}
+          {analysis.documentContent && (
+            <div>
+              <h4 className={`text-sm font-medium text-gray-700 mb-1 flex items-center ${language === 'ar' ? 'text-right flex-row-reverse' : 'text-left'}`}>
+                <FileText className={`w-4 h-4 ${language === 'ar' ? 'ml-1' : 'mr-1'}`} />
+                {language === 'ar' ? 'المحتوى الموجود في الوثيقة:' : 'Content Found in Document:'}
+              </h4>
+              <div className={`bg-gray-100 border-l-4 border-blue-400 p-3 rounded text-sm text-gray-700 ${language === 'ar' ? 'border-l-0 border-r-4 text-right' : 'text-left'}`}>
+                {analysis.documentContent}
+              </div>
+            </div>
+          )}
 
           {/* Findings */}
           <div>

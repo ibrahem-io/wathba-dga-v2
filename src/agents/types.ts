@@ -44,6 +44,7 @@ export interface ComplianceScore {
   evidence: Evidence[];
   findings: string;
   recommendations: string[];
+  documentContent?: string; // New field for actual document content summary
 }
 
 export interface AgentTask {
