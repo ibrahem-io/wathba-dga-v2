@@ -41,10 +41,8 @@ function App() {
 
     initializeSystem();
 
-    // Cleanup on unmount
-    return () => {
-      langchainService.shutdown().catch(console.error);
-    };
+    // Note: Removed cleanup function that was calling langchainService.shutdown()
+    // The langchainService is a singleton and should persist throughout the app lifecycle
   }, [language]);
 
   return (
