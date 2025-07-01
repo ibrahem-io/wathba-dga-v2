@@ -15,8 +15,11 @@ export async function extractTextFromFile(file: File): Promise<string> {
         } else if (file.type === 'text/plain') {
           const text = await extractTextFromTXT(arrayBuffer);
           resolve(text);
+        } else if (file.type.startsWith('image/')) {
+          // For image files, return a placeholder - they will be processed by Vision API
+          resolve('[IMAGE_FILE_FOR_VISION_API]');
         } else {
-          reject(new Error('Unsupported file type'));
+          reject(new Error(`Unsupported file type: ${file.type}`));
         }
       } catch (error) {
         reject(error);
@@ -46,17 +49,18 @@ export async function fileToBase64(file: File): Promise<string> {
 
 export function isVisualDocument(file: File): boolean {
   // Determine if file should be processed with Vision API
-  const visualTypes = [
+  const imageTypes = [
     'image/jpeg',
     'image/jpg', 
     'image/png',
     'image/tiff',
     'image/bmp',
-    'image/webp',
-    'application/pdf' // PDFs can benefit from Vision API for scanned documents
+    'image/webp'
   ];
   
-  return visualTypes.includes(file.type);
+  // Only return true for actual image files
+  // PDFs will be handled with text extraction first, then fallback to Vision if needed
+  return imageTypes.includes(file.type);
 }
 
 async function extractTextFromTXT(arrayBuffer: ArrayBuffer): Promise<string> {
@@ -93,7 +97,7 @@ async function extractTextFromTXT(arrayBuffer: ArrayBuffer): Promise<string> {
 }
 
 async function extractTextFromPDF(arrayBuffer: ArrayBuffer, file: File): Promise<string> {
-  console.log(`🔍 Starting enhanced PDF extraction for: ${file.name}`);
+  console.log(`🔍 Starting PDF extraction for: ${file.name}`);
   
   try {
     // Use manual extraction method since pdf-parse is not available in browser
@@ -105,14 +109,14 @@ async function extractTextFromPDF(arrayBuffer: ArrayBuffer, file: File): Promise
       return cleanedText.substring(0, 50000);
     }
     
-    // If manual extraction fails, return a placeholder that indicates Vision API should be used
-    console.log(`⚠️ Manual extraction insufficient (${cleanedText.length} characters). Document may be image-based.`);
-    return `[VISUAL_DOCUMENT_FOR_VISION_API]`;
+    // If manual extraction fails, return a placeholder that indicates limited content
+    console.log(`⚠️ Manual extraction insufficient (${cleanedText.length} characters). Document may be image-based or have limited text.`);
+    return `[LIMITED_TEXT_CONTENT]`;
     
   } catch (error) {
     console.error('PDF extraction failed:', error);
-    // Return placeholder for Vision API processing
-    return `[VISUAL_DOCUMENT_FOR_VISION_API]`;
+    // Return placeholder for limited content
+    return `[LIMITED_TEXT_CONTENT]`;
   }
 }
 

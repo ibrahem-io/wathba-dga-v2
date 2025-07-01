@@ -20,7 +20,7 @@ export class ComplianceScorerAgent extends BaseAgent {
         throw new Error('OpenAI API key not found');
       }
 
-      // Use gpt-4o-vision for enhanced document analysis
+      // Use gpt-4o for enhanced document analysis
       this.llm = new ChatOpenAI({
         modelName: 'gpt-4o',
         temperature: 0.2,
@@ -28,7 +28,7 @@ export class ComplianceScorerAgent extends BaseAgent {
         openAIApiKey: apiKey,
       });
       
-      console.log(`Compliance Scorer Agent ${this.config.id} initialized with Vision support`);
+      console.log(`Compliance Scorer Agent ${this.config.id} initialized`);
     } catch (error) {
       console.error(`Failed to initialize LLM for agent ${this.config.id}:`, error);
       throw error;
@@ -46,10 +46,13 @@ export class ComplianceScorerAgent extends BaseAgent {
       console.log(`🔍 Starting compliance scoring for criteria ${criteriaId}`);
       console.log(`📄 Document: ${documentMetadata.filename} (${documentMetadata.wordCount} words, ${documentMetadata.confidence}% confidence)`);
       console.log(`🔍 Evidence pieces: ${evidence.length}`);
-      console.log(`👁️ Visual document: ${documentMetadata.isVisualDocument ? 'Yes' : 'No'}`);
+      console.log(`📁 File type: ${documentMetadata.fileType}`);
 
-      // Use Vision API for visual documents, text analysis for others
-      const result = documentMetadata.isVisualDocument && documentMetadata.base64Image
+      // Only use Vision API for actual image files, not PDFs
+      const shouldUseVision = this.shouldUseVisionAPI(documentMetadata);
+      console.log(`👁️ Using Vision API: ${shouldUseVision}`);
+
+      const result = shouldUseVision && documentMetadata.base64Image
         ? await this.analyzeWithVision(documentMetadata, criteriaId, language, evidence)
         : await this.analyzeWithText(documentMetadata, criteriaId, language, evidence);
 
@@ -64,6 +67,20 @@ export class ComplianceScorerAgent extends BaseAgent {
     }
   }
 
+  private shouldUseVisionAPI(metadata: DocumentMetadata): boolean {
+    // Only use Vision API for actual image files, not PDFs
+    const imageTypes = [
+      'image/jpeg',
+      'image/jpg', 
+      'image/png',
+      'image/tiff',
+      'image/bmp',
+      'image/webp'
+    ];
+    
+    return imageTypes.includes(metadata.fileType);
+  }
+
   private async analyzeWithVision(
     metadata: DocumentMetadata,
     criteriaId: string,
@@ -74,7 +91,7 @@ export class ComplianceScorerAgent extends BaseAgent {
       throw new Error('Vision analysis not available');
     }
 
-    console.log(`👁️ Using Vision API for document analysis`);
+    console.log(`👁️ Using Vision API for image analysis`);
 
     const systemPrompt = this.getDetailedAuditPrompt(criteriaId, language);
     
@@ -91,16 +108,16 @@ export class ComplianceScorerAgent extends BaseAgent {
 الأدلة المستخرجة مسبقاً (إن وجدت):
 ${evidenceText}
 
-يرجى تحليل هذه الوثيقة بعناية للبحث عن أي دليل على الامتثال للمتطلب ${criteriaId} وفقاً للإرشادات التفصيلية المحددة.
+يرجى تحليل هذه الصورة بعناية للبحث عن أي دليل على الامتثال للمتطلب ${criteriaId} وفقاً للإرشادات التفصيلية المحددة.
 
 تعليمات مهمة للتحليل البصري:
-1. اقرأ النص الموجود في الوثيقة بعناية
+1. اقرأ النص الموجود في الصورة بعناية
 2. ابحث عن أي إشارة أو دليل حتى لو كان غير مباشر
 3. استخدم السياق العام للوثيقة لفهم المحتوى
 4. كن متساهلاً في التقييم - أي إشارة للموضوع تعتبر إيجابية
 5. إذا كان النص غير واضح، ركز على الكلمات المفتاحية والمفاهيم العامة
 6. قدم تحليلاً مفصلاً حتى لو كانت الأدلة محدودة
-7. اذكر النص الفعلي الذي تم العثور عليه في الوثيقة
+7. اذكر النص الفعلي الذي تم العثور عليه في الصورة
 ` : `
 Document: ${metadata.filename}
 File Type: ${metadata.fileType}
@@ -109,19 +126,21 @@ File Size: ${this.formatFileSize(metadata.fileSize)}
 Previously extracted evidence (if any):
 ${evidenceText}
 
-Please carefully analyze this document for any evidence of compliance with requirement ${criteriaId} according to the detailed guidelines specified.
+Please carefully analyze this image for any evidence of compliance with requirement ${criteriaId} according to the detailed guidelines specified.
 
 Important instructions for visual analysis:
-1. Read the text in the document carefully
+1. Read the text in the image carefully
 2. Look for any indication or evidence even if indirect
 3. Use the general context of the document to understand content
 4. Be lenient in evaluation - any reference to the topic counts as positive
 5. If text is unclear, focus on keywords and general concepts
 6. Provide detailed analysis even if evidence is limited
-7. Mention the actual text found in the document
+7. Mention the actual text found in the image
 `;
 
-    // Create message with image
+    // Create message with image - use proper MIME type
+    const imageUrl = `data:${metadata.fileType};base64,${metadata.base64Image}`;
+    
     const messages = [
       new SystemMessage(systemPrompt),
       new HumanMessage({
@@ -133,7 +152,7 @@ Important instructions for visual analysis:
           {
             type: "image_url",
             image_url: {
-              url: `data:${metadata.fileType};base64,${metadata.base64Image}`
+              url: imageUrl
             }
           }
         ]
@@ -158,11 +177,22 @@ Important instructions for visual analysis:
 
     const systemPrompt = this.getDetailedAuditPrompt(criteriaId, language);
 
+    // Handle special case where document was marked for Vision API but we're using text analysis
+    let textToAnalyze = metadata.extractedText;
+    if (textToAnalyze === '[VISUAL_DOCUMENT_FOR_VISION_API]' || textToAnalyze.trim().length < 20) {
+      // For PDFs that couldn't be text-extracted, provide a helpful message
+      const fallbackMessage = language === 'ar' 
+        ? `هذه وثيقة PDF (${metadata.filename}) لم يتم استخراج نص كافٍ منها. قد تكون وثيقة ممسوحة ضوئياً أو تحتوي على صور. يرجى تحليل المحتوى بناءً على نوع الملف والسياق المتاح.`
+        : `This is a PDF document (${metadata.filename}) with insufficient text extraction. It may be a scanned document or contain images. Please analyze based on file type and available context.`;
+      
+      textToAnalyze = fallbackMessage;
+    }
+
     // Limit text to prevent token overflow but keep more content for better analysis
     const maxTextLength = 12000;
-    const textToAnalyze = metadata.extractedText.length > maxTextLength 
-      ? metadata.extractedText.substring(0, maxTextLength) + '...'
-      : metadata.extractedText;
+    if (textToAnalyze.length > maxTextLength) {
+      textToAnalyze = textToAnalyze.substring(0, maxTextLength) + '...';
+    }
 
     // Include evidence in the analysis
     const evidenceText = evidence.length > 0 
@@ -171,6 +201,7 @@ Important instructions for visual analysis:
 
     const userPrompt = language === 'ar' ? `
 الوثيقة: ${metadata.filename}
+نوع الملف: ${metadata.fileType}
 اللغة المكتشفة: ${metadata.language}
 عدد الكلمات: ${metadata.wordCount}
 ثقة الاستخراج: ${metadata.confidence}%
@@ -178,19 +209,20 @@ Important instructions for visual analysis:
 الأدلة المستخرجة:
 ${evidenceText}
 
-النص الكامل للتحليل:
+النص المتاح للتحليل:
 ${textToAnalyze}
 
-قم بتحليل هذا النص بعناية للبحث عن أي دليل على الامتثال للمتطلب ${criteriaId} وفقاً للإرشادات التفصيلية المحددة.
+قم بتحليل هذا المحتوى بعناية للبحث عن أي دليل على الامتثال للمتطلب ${criteriaId} وفقاً للإرشادات التفصيلية المحددة.
 
 تعليمات مهمة:
 1. ابحث عن أي إشارة أو دليل حتى لو كان غير مباشر
 2. استخدم السياق العام للوثيقة لفهم المحتوى
 3. كن متساهلاً في التقييم - أي إشارة للموضوع تعتبر إيجابية
-4. إذا كان النص غير واضح، ركز على الكلمات المفتاحية والمفاهيم العامة
+4. إذا كان النص محدود، ركز على نوع الوثيقة والسياق المتاح
 5. قدم تحليلاً مفصلاً حتى لو كانت الأدلة محدودة
 ` : `
 Document: ${metadata.filename}
+File Type: ${metadata.fileType}
 Detected Language: ${metadata.language}
 Word Count: ${metadata.wordCount}
 Extraction Confidence: ${metadata.confidence}%
@@ -198,16 +230,16 @@ Extraction Confidence: ${metadata.confidence}%
 Extracted Evidence:
 ${evidenceText}
 
-Full text for analysis:
+Available text for analysis:
 ${textToAnalyze}
 
-Carefully analyze this text for any evidence of compliance with requirement ${criteriaId} according to the detailed guidelines specified.
+Carefully analyze this content for any evidence of compliance with requirement ${criteriaId} according to the detailed guidelines specified.
 
 Important instructions:
 1. Look for any indication or evidence even if indirect
 2. Use the general context of the document to understand content
 3. Be lenient in evaluation - any reference to the topic counts as positive
-4. If text is unclear, focus on keywords and general concepts
+4. If text is limited, focus on document type and available context
 5. Provide detailed analysis even if evidence is limited
 `;
 
@@ -673,16 +705,16 @@ Return JSON response only:
     const text = metadata.extractedText;
     const language = metadata.language;
     
-    if (metadata.isVisualDocument) {
+    if (this.shouldUseVisionAPI(metadata)) {
       return language === 'ar' 
-        ? `وثيقة بصرية (${metadata.fileType}) تم تحليلها باستخدام تقنية الرؤية الاصطناعية. الملف: ${metadata.filename}`
-        : `Visual document (${metadata.fileType}) analyzed using AI Vision technology. File: ${metadata.filename}`;
+        ? `صورة (${metadata.fileType}) تم تحليلها باستخدام تقنية الرؤية الاصطناعية. الملف: ${metadata.filename}`
+        : `Image (${metadata.fileType}) analyzed using AI Vision technology. File: ${metadata.filename}`;
     }
     
-    if (!text || text.trim().length < 10) {
+    if (!text || text.trim().length < 10 || text === '[VISUAL_DOCUMENT_FOR_VISION_API]') {
       return language === 'ar' 
-        ? 'لا يوجد محتوى نصي كافٍ في الوثيقة للتحليل'
-        : 'Insufficient text content in document for analysis';
+        ? `وثيقة PDF (${metadata.filename}) مع محتوى نصي محدود. قد تكون وثيقة ممسوحة ضوئياً أو تحتوي على صور.`
+        : `PDF document (${metadata.filename}) with limited text content. May be a scanned document or contain images.`;
     }
 
     // Extract first few sentences as a summary
@@ -713,7 +745,7 @@ Return JSON response only:
     metadata: DocumentMetadata,
     error: any
   ): ComplianceScore {
-    const analysisMethod = metadata.isVisualDocument ? 'Vision API' : 'text analysis';
+    const analysisMethod = this.shouldUseVisionAPI(metadata) ? 'Vision API' : 'text analysis';
     
     const findings = language === 'ar' 
       ? `حدث خطأ أثناء تحليل الوثيقة "${metadata.filename}" باستخدام ${analysisMethod}: ${error instanceof Error ? error.message : 'خطأ غير معروف'}. تم العثور على ${evidence.length} دليل. الوثيقة تحتوي على ${metadata.wordCount} كلمة بثقة استخراج ${metadata.confidence}%.`
