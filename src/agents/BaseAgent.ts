@@ -2,7 +2,7 @@ import { AgentConfig, AgentResult } from './types';
 
 export abstract class BaseAgent {
   protected config: AgentConfig;
-  protected isInitialized: boolean = false;
+  private initializationPromise: Promise<void> | null = null;
 
   constructor(config: AgentConfig) {
     this.config = config;
@@ -13,12 +13,19 @@ export abstract class BaseAgent {
   }
 
   protected async initialize(): Promise<void> {
-    if (this.isInitialized) return;
-    
+    if (this.initializationPromise) {
+      return this.initializationPromise; // Wait for existing initialization
+    }
+
+    this.initializationPromise = this.performInitialization();
+    return this.initializationPromise;
+  }
+
+  private async performInitialization(): Promise<void> {
     try {
       await this.onInitialize();
-      this.isInitialized = true;
     } catch (error) {
+      this.initializationPromise = null; // Reset on failure to allow retry
       console.error(`Failed to initialize agent ${this.config.id}:`, error);
       throw error;
     }
@@ -34,7 +41,6 @@ export abstract class BaseAgent {
       
       const result = await this.onExecute(input);
       const executionTime = Date.now() - startTime;
-
       return {
         agentId: this.config.id,
         success: true,
@@ -72,4 +78,4 @@ export abstract class BaseAgent {
   }
 }
 
-export {BaseAgent}
+export { BaseAgent }
