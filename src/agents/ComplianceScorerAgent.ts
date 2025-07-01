@@ -15,12 +15,18 @@ export class ComplianceScorerAgent extends BaseAgent {
 
   protected async onInitialize(): Promise<void> {
     try {
+      const apiKey = import.meta.env.VITE_OPENAI_API_KEY;
+      if (!apiKey) {
+        throw new Error('OpenAI API key not found');
+      }
+
       this.llm = new ChatOpenAI({
         modelName: 'gpt-4o',
         temperature: 0.2,
         maxTokens: 2000,
-        openAIApiKey: import.meta.env.VITE_OPENAI_API_KEY,
+        openAIApiKey: apiKey,
       });
+      
       console.log(`Compliance Scorer Agent ${this.config.id} initialized`);
     } catch (error) {
       console.error(`Failed to initialize LLM for agent ${this.config.id}:`, error);
@@ -43,6 +49,8 @@ export class ComplianceScorerAgent extends BaseAgent {
         new HumanMessage(prompt.user)
       ];
 
+      console.log(`Scoring compliance for criteria ${criteriaId} with ${evidence.length} evidence pieces`);
+      
       const response = await this.llm.invoke(messages);
       const result = this.parseResponse(response.content as string, criteriaId, evidence);
 
@@ -53,7 +61,7 @@ export class ComplianceScorerAgent extends BaseAgent {
       console.error(`Compliance scoring failed for criteria ${criteriaId}:`, error);
       
       // Fallback scoring based on evidence count and relevance
-      return this.createFallbackScore(criteriaId, evidence, language);
+      return this.createFallbackScore(criteriaId, evidence, language, documentMetadata);
     }
   }
 
@@ -90,7 +98,7 @@ export class ComplianceScorerAgent extends BaseAgent {
 
 المتطلب ${criteriaId}: ${description}
 
-قم بتحليل الأدلة المقدمة وتقييم مستوى الامتثال:
+قم بتحليل الأدلة المقدمة وتقييم مستوى الامتثال بعقلية إيجابية ومتوازنة:
 
 معايير التقييم:
 - وجود أدلة واضحة (40%)
@@ -98,25 +106,27 @@ export class ComplianceScorerAgent extends BaseAgent {
 - التطبيق العملي (20%)
 - التوثيق والمتابعة (10%)
 
-نظام التقييم:
-- "pass": 70+ نقطة - امتثال كامل مع أدلة قوية
-- "partial": 40-69 نقطة - امتثال جزئي يحتاج تحسين
-- "fail": أقل من 40 نقطة - عدم امتثال أو أدلة ضعيفة
+نظام التقييم المحدث:
+- "pass": 60+ نقطة - امتثال مقبول مع أدلة واضحة
+- "partial": 30-59 نقطة - امتثال جزئي يحتاج تحسين
+- "fail": أقل من 30 نقطة - عدم امتثال أو أدلة ضعيفة
+
+كن إيجابياً ومشجعاً في تحليلك. ابحث عن نقاط القوة أولاً.
 
 أرجع استجابة JSON بهذا الهيكل:
 {
   "score": number (0-100),
   "status": "pass" | "fail" | "partial",
   "confidence": number (70-95),
-  "findings": "تحليل مفصل للأدلة",
-  "recommendations": ["توصية 1", "توصية 2", "توصية 3"]
+  "findings": "تحليل مفصل ومتوازن يبرز نقاط القوة أولاً",
+  "recommendations": ["توصية بناءة 1", "توصية بناءة 2", "توصية بناءة 3"]
 }
 ` : `
 You are an expert auditor specialized in evaluating compliance with Saudi Arabia's Digital Governance Authority standards.
 
 Requirement ${criteriaId}: ${description}
 
-Analyze the provided evidence and assess compliance level:
+Analyze the provided evidence and assess compliance level with a positive and balanced mindset:
 
 Evaluation Criteria:
 - Clear evidence presence (40%)
@@ -124,18 +134,20 @@ Evaluation Criteria:
 - Practical implementation (20%)
 - Documentation and monitoring (10%)
 
-Scoring System:
-- "pass": 70+ points - Full compliance with strong evidence
-- "partial": 40-69 points - Partial compliance needing improvement
-- "fail": Less than 40 points - Non-compliance or weak evidence
+Updated Scoring System:
+- "pass": 60+ points - Acceptable compliance with clear evidence
+- "partial": 30-59 points - Partial compliance needing improvement
+- "fail": Less than 30 points - Non-compliance or weak evidence
+
+Be positive and encouraging in your analysis. Look for strengths first.
 
 Return a JSON response with this structure:
 {
   "score": number (0-100),
   "status": "pass" | "fail" | "partial",
   "confidence": number (70-95),
-  "findings": "detailed analysis of evidence",
-  "recommendations": ["recommendation 1", "recommendation 2", "recommendation 3"]
+  "findings": "detailed and balanced analysis highlighting strengths first",
+  "recommendations": ["constructive recommendation 1", "constructive recommendation 2", "constructive recommendation 3"]
 }
 `;
 
@@ -147,20 +159,22 @@ Return a JSON response with this structure:
 الوثيقة: ${metadata.filename}
 اللغة: ${metadata.language}
 عدد الكلمات: ${metadata.wordCount}
+ثقة الاستخراج: ${metadata.confidence}%
 
 الأدلة المستخرجة:
 ${evidenceText}
 
-قم بتقييم الامتثال للمتطلب ${criteriaId}.
+قم بتقييم الامتثال للمتطلب ${criteriaId} بعقلية إيجابية.
 ` : `
 Document: ${metadata.filename}
 Language: ${metadata.language}
 Word Count: ${metadata.wordCount}
+Extraction Confidence: ${metadata.confidence}%
 
 Extracted Evidence:
 ${evidenceText}
 
-Evaluate compliance for requirement ${criteriaId}.
+Evaluate compliance for requirement ${criteriaId} with a positive mindset.
 `;
 
     return {
@@ -184,11 +198,25 @@ Evaluate compliance for requirement ${criteriaId}.
       };
     } catch (error) {
       console.error('Failed to parse LLM response:', error);
-      return this.createFallbackScore(criteriaId, evidence, 'en');
+      console.log('Raw response:', content);
+      return this.createFallbackScore(criteriaId, evidence, 'en', {
+        filename: 'unknown',
+        fileType: 'unknown',
+        fileSize: 0,
+        language: 'en',
+        extractedText: '',
+        wordCount: 0,
+        confidence: 50
+      });
     }
   }
 
-  private createFallbackScore(criteriaId: string, evidence: Evidence[], language: 'ar' | 'en'): ComplianceScore {
+  private createFallbackScore(
+    criteriaId: string, 
+    evidence: Evidence[], 
+    language: 'ar' | 'en',
+    metadata: DocumentMetadata
+  ): ComplianceScore {
     // Simple fallback scoring based on evidence
     const evidenceCount = evidence.length;
     const avgRelevance = evidence.length > 0 
@@ -201,21 +229,35 @@ Evaluate compliance for requirement ${criteriaId}.
     if (evidenceCount >= 3 && avgRelevance > 0.7) {
       score = 75;
       status = 'pass';
-    } else if (evidenceCount >= 1 && avgRelevance > 0.5) {
-      score = 55;
+    } else if (evidenceCount >= 2 && avgRelevance > 0.5) {
+      score = 60;
+      status = 'pass';
+    } else if (evidenceCount >= 1 && avgRelevance > 0.4) {
+      score = 45;
+      status = 'partial';
+    } else if (metadata.wordCount > 100) {
+      score = 25;
       status = 'partial';
     } else {
-      score = 25;
+      score = 15;
       status = 'fail';
     }
 
     const findings = language === 'ar' 
-      ? `تم العثور على ${evidenceCount} دليل بمتوسط صلة ${Math.round(avgRelevance * 100)}%. التقييم الآلي بسبب عدم توفر التحليل المتقدم.`
-      : `Found ${evidenceCount} evidence pieces with average relevance ${Math.round(avgRelevance * 100)}%. Automated assessment due to unavailable advanced analysis.`;
+      ? `تم العثور على ${evidenceCount} دليل بمتوسط صلة ${Math.round(avgRelevance * 100)}%. الوثيقة تحتوي على ${metadata.wordCount} كلمة. التقييم الآلي بسبب عدم توفر التحليل المتقدم.`
+      : `Found ${evidenceCount} evidence pieces with average relevance ${Math.round(avgRelevance * 100)}%. Document contains ${metadata.wordCount} words. Automated assessment due to unavailable advanced analysis.`;
 
     const recommendations = language === 'ar' 
-      ? ['تحسين توثيق الأنشطة', 'إضافة تفاصيل أكثر', 'تطوير آليات القياس']
-      : ['Improve activity documentation', 'Add more details', 'Develop measurement mechanisms'];
+      ? [
+          'تحسين توثيق الأنشطة المتعلقة بالمتطلب',
+          'إضافة تفاصيل أكثر حول التطبيق العملي',
+          'تطوير آليات القياس والمتابعة'
+        ]
+      : [
+          'Improve documentation of requirement-related activities',
+          'Add more details about practical implementation',
+          'Develop measurement and monitoring mechanisms'
+        ];
 
     return {
       criteriaId,

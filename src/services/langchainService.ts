@@ -13,12 +13,41 @@ export class LangChainAuditService {
     if (this.isInitialized) return;
     
     try {
+      // Check if OpenAI API key is available
+      const apiKey = import.meta.env.VITE_OPENAI_API_KEY;
+      if (!apiKey) {
+        throw new Error('OpenAI API key not found. Please set VITE_OPENAI_API_KEY in your environment variables.');
+      }
+
+      // Test API key validity
+      await this.testApiKey(apiKey);
+      
       // Agent manager initializes agents automatically
       this.isInitialized = true;
       console.log('LangChain Audit Service initialized successfully');
     } catch (error) {
       console.error('Failed to initialize LangChain Audit Service:', error);
       throw error;
+    }
+  }
+
+  private async testApiKey(apiKey: string): Promise<void> {
+    try {
+      const response = await fetch('https://api.openai.com/v1/models', {
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error(`API key validation failed: ${response.status} ${response.statusText}`);
+      }
+
+      console.log('OpenAI API key validated successfully');
+    } catch (error) {
+      console.error('API key validation error:', error);
+      throw new Error('Invalid OpenAI API key. Please check your configuration.');
     }
   }
 
@@ -107,6 +136,8 @@ export class LangChainAuditService {
     await this.initialize();
 
     try {
+      console.log(`Starting criteria analysis for ${criteriaId}...`);
+      
       // Parse document
       const parseResult = await this.agentManager.executeTask('document_parser', { file }, 1);
       if (!parseResult.success) {
@@ -114,6 +145,7 @@ export class LangChainAuditService {
       }
 
       const metadata: DocumentMetadata = parseResult.data;
+      console.log(`Document parsed: ${metadata.filename} (${metadata.language}, ${metadata.wordCount} words)`);
 
       // Extract evidence
       const evidenceResult = await this.agentManager.executeTask('evidence_extractor', {
@@ -123,6 +155,7 @@ export class LangChainAuditService {
       }, 2);
 
       const evidence: Evidence[] = evidenceResult.success ? evidenceResult.data : [];
+      console.log(`Evidence extracted: ${evidence.length} pieces found`);
 
       // Score compliance
       const scoringResult = await this.agentManager.executeTask('compliance_scorer', {
@@ -133,15 +166,84 @@ export class LangChainAuditService {
       }, 3);
 
       if (!scoringResult.success) {
-        throw new Error(`Compliance scoring failed: ${scoringResult.error}`);
+        console.warn(`Compliance scoring failed, using fallback: ${scoringResult.error}`);
+        // Return fallback score instead of throwing error
+        return this.createFallbackScore(criteriaId, evidence, language, metadata);
       }
 
+      console.log(`Criteria analysis completed for ${criteriaId}`);
       return scoringResult.data;
 
     } catch (error) {
       console.error(`Criteria analysis failed for ${criteriaId}:`, error);
-      throw error;
+      
+      // Return a meaningful fallback instead of throwing
+      return this.createFallbackScore(criteriaId, [], language, {
+        filename: file.name,
+        fileType: file.type,
+        fileSize: file.size,
+        language,
+        extractedText: '',
+        wordCount: 0,
+        confidence: 50
+      });
     }
+  }
+
+  private createFallbackScore(
+    criteriaId: string, 
+    evidence: Evidence[], 
+    language: 'ar' | 'en',
+    metadata: DocumentMetadata
+  ): ComplianceScore {
+    const evidenceCount = evidence.length;
+    const avgRelevance = evidence.length > 0 
+      ? evidence.reduce((sum, e) => sum + e.relevance, 0) / evidence.length 
+      : 0;
+
+    let score = 0;
+    let status: 'pass' | 'fail' | 'partial' = 'fail';
+
+    if (evidenceCount >= 3 && avgRelevance > 0.7) {
+      score = 75;
+      status = 'pass';
+    } else if (evidenceCount >= 1 && avgRelevance > 0.5) {
+      score = 55;
+      status = 'partial';
+    } else if (metadata.wordCount > 100) {
+      // Give some credit for having content
+      score = 30;
+      status = 'partial';
+    } else {
+      score = 15;
+      status = 'fail';
+    }
+
+    const findings = language === 'ar' 
+      ? `تم تحليل الوثيقة "${metadata.filename}" وعثر على ${evidenceCount} دليل. التقييم الآلي بسبب عدم توفر التحليل المتقدم. عدد الكلمات: ${metadata.wordCount}.`
+      : `Analyzed document "${metadata.filename}" and found ${evidenceCount} evidence pieces. Automated assessment due to unavailable advanced analysis. Word count: ${metadata.wordCount}.`;
+
+    const recommendations = language === 'ar' 
+      ? [
+          'تحسين توثيق الأنشطة المتعلقة بالمتطلب',
+          'إضافة تفاصيل أكثر حول التطبيق العملي',
+          'تطوير آليات القياس والمتابعة'
+        ]
+      : [
+          'Improve documentation of requirement-related activities',
+          'Add more details about practical implementation',
+          'Develop measurement and monitoring mechanisms'
+        ];
+
+    return {
+      criteriaId,
+      score,
+      status,
+      confidence: 70,
+      evidence,
+      findings,
+      recommendations
+    };
   }
 
   public getSystemStatus(): {

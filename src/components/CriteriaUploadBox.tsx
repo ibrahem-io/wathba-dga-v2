@@ -106,7 +106,11 @@ export default function CriteriaUploadBox({
       
       setAnalysisProgress(language === 'ar' ? 'تحليل الوثيقة بواسطة الوكلاء الذكيين...' : 'Analyzing document with smart agents...');
 
+      console.log(`Starting analysis for criteria ${criteriaId} with file:`, primaryFile.name);
+      
       const result = await langchainService.analyzeCriteria(primaryFile, criteriaId, language);
+      
+      console.log(`Analysis completed for criteria ${criteriaId}:`, result);
       
       // Convert LangChain result to expected format
       const analysis: CriteriaAnalysis = {
@@ -124,11 +128,20 @@ export default function CriteriaUploadBox({
 
     } catch (error) {
       console.error('LangChain analysis error:', error);
-      setError(error instanceof Error ? error.message : 
+      const errorMessage = error instanceof Error ? error.message : 
         (language === 'ar' 
           ? 'حدث خطأ أثناء تحليل الملفات'
-          : 'An error occurred while analyzing the files'));
+          : 'An error occurred while analyzing the files');
+      
+      setError(errorMessage);
       setAnalysisProgress('');
+      
+      // Show more specific error messages
+      if (errorMessage.includes('API key')) {
+        setError(language === 'ar' 
+          ? 'مفتاح OpenAI API غير صحيح أو غير موجود. يرجى التحقق من الإعدادات.'
+          : 'OpenAI API key is invalid or missing. Please check your configuration.');
+      }
     } finally {
       setIsAnalyzing(false);
     }
