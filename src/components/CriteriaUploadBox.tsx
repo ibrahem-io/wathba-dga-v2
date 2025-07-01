@@ -70,7 +70,7 @@ export default function CriteriaUploadBox({
   };
 
   const handleFiles = (files: File[]) => {
-    const maxSize = 10 * 1024 * 1024; // 10MB for enhanced processing
+    const maxSize = 10 * 1024 * 1024; // 10MB for Vision API support
     const allowedTypes = [
       'application/pdf', 
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -79,7 +79,8 @@ export default function CriteriaUploadBox({
       'image/jpg',
       'image/png',
       'image/tiff',
-      'image/bmp'
+      'image/bmp',
+      'image/webp'
     ];
 
     const validFiles = files.filter(file => {
@@ -113,21 +114,21 @@ export default function CriteriaUploadBox({
       
       // Set processing method based on file type
       if (primaryFile.type.startsWith('image/')) {
-        setProcessingMethod('OCR');
-        setAnalysisProgress(language === 'ar' ? 'تحليل الصورة باستخدام تقنية التعرف الضوئي على الحروف المتقدمة...' : 'Analyzing image using advanced OCR technology...');
+        setProcessingMethod('Vision API');
+        setAnalysisProgress(language === 'ar' ? 'تحليل الصورة باستخدام OpenAI Vision API...' : 'Analyzing image using OpenAI Vision API...');
       } else if (primaryFile.type === 'application/pdf') {
-        setProcessingMethod('Enhanced PDF');
-        setAnalysisProgress(language === 'ar' ? 'معالجة PDF متقدمة (استخراج نص + OCR للمستندات الممسوحة ضوئياً)...' : 'Advanced PDF processing (text extraction + OCR for scanned documents)...');
+        setProcessingMethod('Hybrid PDF + Vision');
+        setAnalysisProgress(language === 'ar' ? 'معالجة PDF متقدمة (استخراج نص + Vision API للمستندات الممسوحة ضوئياً)...' : 'Advanced PDF processing (text extraction + Vision API for scanned documents)...');
       } else {
         setProcessingMethod('Text Extraction');
         setAnalysisProgress(language === 'ar' ? 'استخراج النص المتقدم...' : 'Advanced text extraction...');
       }
 
-      console.log(`🚀 Starting enhanced analysis for criteria ${criteriaId} with file:`, primaryFile.name);
+      console.log(`🚀 Starting Vision-enhanced analysis for criteria ${criteriaId} with file:`, primaryFile.name);
       
       const result = await langchainService.analyzeCriteria(primaryFile, criteriaId, language);
       
-      console.log(`✅ Enhanced analysis completed for criteria ${criteriaId}:`, result);
+      console.log(`✅ Vision-enhanced analysis completed for criteria ${criteriaId}:`, result);
       
       const analysis: CriteriaAnalysis = {
         score: result.score,
@@ -144,7 +145,7 @@ export default function CriteriaUploadBox({
       setAnalysisProgress(language === 'ar' ? 'اكتمل التحليل المتقدم بنجاح!' : 'Advanced analysis completed successfully!');
 
     } catch (error) {
-      console.error('Enhanced analysis error:', error);
+      console.error('Vision-enhanced analysis error:', error);
       const errorMessage = error instanceof Error ? error.message : 
         (language === 'ar' 
           ? 'حدث خطأ أثناء التحليل المتقدم للملفات'
@@ -154,10 +155,10 @@ export default function CriteriaUploadBox({
       setAnalysisProgress('');
       
       // Provide specific error guidance
-      if (errorMessage.includes('OCR')) {
+      if (errorMessage.includes('Vision')) {
         setError(language === 'ar' 
-          ? 'فشل في تحليل الصورة بتقنية OCR المتقدمة. يرجى التأكد من وضوح النص في الصورة وجودة الدقة.'
-          : 'Advanced OCR analysis failed. Please ensure the text in the image is clear and high resolution.');
+          ? 'فشل في تحليل الوثيقة باستخدام Vision API. يرجى التأكد من وضوح النص في الصورة وجودة الدقة.'
+          : 'Vision API analysis failed. Please ensure the text in the image is clear and high resolution.');
       } else if (errorMessage.includes('PDF')) {
         setError(language === 'ar' 
           ? 'فشل في معالجة PDF المتقدمة. قد يكون الملف محمي بكلمة مرور أو تالف أو يحتوي على صور فقط.'
@@ -234,9 +235,9 @@ export default function CriteriaUploadBox({
 
   const getProcessingMethodIcon = () => {
     switch (processingMethod) {
-      case 'OCR':
+      case 'Vision API':
         return <Eye className="w-4 h-4 text-purple-600" />;
-      case 'Enhanced PDF':
+      case 'Hybrid PDF + Vision':
         return <Zap className="w-4 h-4 text-red-600" />;
       default:
         return <FileText className="w-4 h-4 text-blue-600" />;
@@ -298,14 +299,19 @@ export default function CriteriaUploadBox({
               ? '🚀 معالجة متقدمة للوثائق العربية'
               : '🚀 Advanced Arabic document processing'}
           </p>
+          <p className="text-xs text-purple-600 mb-2">
+            {language === 'ar' 
+              ? '👁️ OpenAI Vision API للصور والمستندات الممسوحة ضوئياً'
+              : '👁️ OpenAI Vision API for images and scanned documents'}
+          </p>
           <p className="text-xs text-green-600 mb-3">
             {language === 'ar' 
-              ? '✨ استخراج نص ذكي + OCR متقدم + تحليل هجين'
-              : '✨ Smart text extraction + Advanced OCR + Hybrid analysis'}
+              ? '✨ استخراج نص ذكي + تحليل بصري متقدم + وكلاء ذكيين'
+              : '✨ Smart text extraction + Advanced visual analysis + Smart agents'}
           </p>
           <input
             type="file"
-            accept=".pdf,.docx,.txt,.jpg,.jpeg,.png,.tiff,.bmp"
+            accept=".pdf,.docx,.txt,.jpg,.jpeg,.png,.tiff,.bmp,.webp"
             onChange={handleFileInput}
             className="hidden"
             id={`file-upload-${criteriaId}`}
@@ -334,12 +340,12 @@ export default function CriteriaUploadBox({
                     {formatFileSize(file.size)}
                     {file.type.startsWith('image/') && (
                       <span className="ml-2 text-purple-600">
-                        {language === 'ar' ? '(صورة - OCR متقدم)' : '(Image - Advanced OCR)'}
+                        {language === 'ar' ? '(صورة - Vision API)' : '(Image - Vision API)'}
                       </span>
                     )}
                     {file.type === 'application/pdf' && (
                       <span className="ml-2 text-red-600">
-                        {language === 'ar' ? '(PDF - معالجة هجينة)' : '(PDF - Hybrid processing)'}
+                        {language === 'ar' ? '(PDF - معالجة هجينة + Vision)' : '(PDF - Hybrid + Vision)'}
                       </span>
                     )}
                   </p>
@@ -359,7 +365,7 @@ export default function CriteriaUploadBox({
           <div className="text-center pt-2">
             <input
               type="file"
-              accept=".pdf,.docx,.txt,.jpg,.jpeg,.png,.tiff,.bmp"
+              accept=".pdf,.docx,.txt,.jpg,.jpeg,.png,.tiff,.bmp,.webp"
               onChange={handleFileInput}
               className="hidden"
               id={`file-upload-more-${criteriaId}`}
@@ -401,12 +407,12 @@ export default function CriteriaUploadBox({
         <div className="mt-4 space-y-3">
           {/* Enhanced Processing Badge */}
           <div className={`flex items-center space-x-2 ${language === 'ar' ? 'space-x-reverse' : ''}`}>
-            <Zap className="w-4 h-4 text-orange-500" />
-            <span className="text-xs text-orange-600 font-medium">
-              {language === 'ar' ? 'معالجة متقدمة' : 'Enhanced Processing'}
-            </span>
-            <Users className="w-4 h-4 text-purple-500" />
+            <Eye className="w-4 h-4 text-purple-500" />
             <span className="text-xs text-purple-600 font-medium">
+              {language === 'ar' ? 'Vision API' : 'Vision API'}
+            </span>
+            <Users className="w-4 h-4 text-blue-500" />
+            <span className="text-xs text-blue-600 font-medium">
               {language === 'ar' ? 'وكلاء ذكيين' : 'Smart Agents'}
             </span>
           </div>

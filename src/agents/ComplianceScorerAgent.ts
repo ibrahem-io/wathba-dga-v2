@@ -20,6 +20,7 @@ export class ComplianceScorerAgent extends BaseAgent {
         throw new Error('OpenAI API key not found');
       }
 
+      // Use gpt-4o-vision for enhanced document analysis
       this.llm = new ChatOpenAI({
         modelName: 'gpt-4o',
         temperature: 0.2,
@@ -27,7 +28,7 @@ export class ComplianceScorerAgent extends BaseAgent {
         openAIApiKey: apiKey,
       });
       
-      console.log(`Compliance Scorer Agent ${this.config.id} initialized`);
+      console.log(`Compliance Scorer Agent ${this.config.id} initialized with Vision support`);
     } catch (error) {
       console.error(`Failed to initialize LLM for agent ${this.config.id}:`, error);
       throw error;
@@ -45,9 +46,12 @@ export class ComplianceScorerAgent extends BaseAgent {
       console.log(`🔍 Starting compliance scoring for criteria ${criteriaId}`);
       console.log(`📄 Document: ${documentMetadata.filename} (${documentMetadata.wordCount} words, ${documentMetadata.confidence}% confidence)`);
       console.log(`🔍 Evidence pieces: ${evidence.length}`);
+      console.log(`👁️ Visual document: ${documentMetadata.isVisualDocument ? 'Yes' : 'No'}`);
 
-      // Always analyze the full text for better accuracy
-      const result = await this.analyzeFullText(documentMetadata, criteriaId, language, evidence);
+      // Use Vision API for visual documents, text analysis for others
+      const result = documentMetadata.isVisualDocument && documentMetadata.base64Image
+        ? await this.analyzeWithVision(documentMetadata, criteriaId, language, evidence)
+        : await this.analyzeWithText(documentMetadata, criteriaId, language, evidence);
 
       console.log(`✅ Compliance scoring completed for criteria ${criteriaId}: ${result.status} (${result.score}%)`);
       return result;
@@ -60,7 +64,87 @@ export class ComplianceScorerAgent extends BaseAgent {
     }
   }
 
-  private async analyzeFullText(
+  private async analyzeWithVision(
+    metadata: DocumentMetadata,
+    criteriaId: string,
+    language: 'ar' | 'en',
+    evidence: Evidence[]
+  ): Promise<ComplianceScore> {
+    if (!this.llm || !metadata.base64Image) {
+      throw new Error('Vision analysis not available');
+    }
+
+    console.log(`👁️ Using Vision API for document analysis`);
+
+    const systemPrompt = this.getDetailedAuditPrompt(criteriaId, language);
+    
+    // Include evidence context if available
+    const evidenceText = evidence.length > 0 
+      ? evidence.map((e, i) => `${i + 1}. ${e.text} (صلة: ${Math.round(e.relevance * 100)}%)`).join('\n')
+      : (language === 'ar' ? 'لا توجد أدلة مباشرة مستخرجة مسبقاً' : 'No direct evidence extracted previously');
+
+    const userPrompt = language === 'ar' ? `
+الوثيقة: ${metadata.filename}
+نوع الملف: ${metadata.fileType}
+حجم الملف: ${this.formatFileSize(metadata.fileSize)}
+
+الأدلة المستخرجة مسبقاً (إن وجدت):
+${evidenceText}
+
+يرجى تحليل هذه الوثيقة بعناية للبحث عن أي دليل على الامتثال للمتطلب ${criteriaId} وفقاً للإرشادات التفصيلية المحددة.
+
+تعليمات مهمة للتحليل البصري:
+1. اقرأ النص الموجود في الوثيقة بعناية
+2. ابحث عن أي إشارة أو دليل حتى لو كان غير مباشر
+3. استخدم السياق العام للوثيقة لفهم المحتوى
+4. كن متساهلاً في التقييم - أي إشارة للموضوع تعتبر إيجابية
+5. إذا كان النص غير واضح، ركز على الكلمات المفتاحية والمفاهيم العامة
+6. قدم تحليلاً مفصلاً حتى لو كانت الأدلة محدودة
+7. اذكر النص الفعلي الذي تم العثور عليه في الوثيقة
+` : `
+Document: ${metadata.filename}
+File Type: ${metadata.fileType}
+File Size: ${this.formatFileSize(metadata.fileSize)}
+
+Previously extracted evidence (if any):
+${evidenceText}
+
+Please carefully analyze this document for any evidence of compliance with requirement ${criteriaId} according to the detailed guidelines specified.
+
+Important instructions for visual analysis:
+1. Read the text in the document carefully
+2. Look for any indication or evidence even if indirect
+3. Use the general context of the document to understand content
+4. Be lenient in evaluation - any reference to the topic counts as positive
+5. If text is unclear, focus on keywords and general concepts
+6. Provide detailed analysis even if evidence is limited
+7. Mention the actual text found in the document
+`;
+
+    // Create message with image
+    const messages = [
+      new SystemMessage(systemPrompt),
+      new HumanMessage({
+        content: [
+          {
+            type: "text",
+            text: userPrompt
+          },
+          {
+            type: "image_url",
+            image_url: {
+              url: `data:${metadata.fileType};base64,${metadata.base64Image}`
+            }
+          }
+        ]
+      })
+    ];
+
+    const response = await this.llm.invoke(messages);
+    return this.parseResponse(response.content as string, criteriaId, evidence, metadata);
+  }
+
+  private async analyzeWithText(
     metadata: DocumentMetadata, 
     criteriaId: string, 
     language: 'ar' | 'en',
@@ -70,10 +154,12 @@ export class ComplianceScorerAgent extends BaseAgent {
       throw new Error('LLM not initialized');
     }
 
+    console.log(`📝 Using text analysis for document`);
+
     const systemPrompt = this.getDetailedAuditPrompt(criteriaId, language);
 
     // Limit text to prevent token overflow but keep more content for better analysis
-    const maxTextLength = 12000; // Increased from 8000
+    const maxTextLength = 12000;
     const textToAnalyze = metadata.extractedText.length > maxTextLength 
       ? metadata.extractedText.substring(0, maxTextLength) + '...'
       : metadata.extractedText;
@@ -513,7 +599,7 @@ Return JSON response only:
     return language === 'ar' ? `
 أنت خبير مدقق متخصص في تقييم معايير هيئة الحكومة الرقمية السعودية.
 
-قم بتحليل النص للبحث عن أدلة الامتثال للمتطلب ${criteriaId}.
+قم بتحليل الوثيقة للبحث عن أدلة الامتثال للمتطلب ${criteriaId}.
 
 كن متساهلاً وشاملاً في تقييمك وقدم رؤى قابلة للتنفيذ.
 
@@ -529,7 +615,7 @@ Return JSON response only:
 ` : `
 You are an expert auditor specialized in evaluating Saudi Arabia's Digital Governance Authority standards.
 
-Analyze the text for evidence of compliance with requirement ${criteriaId}.
+Analyze the document for evidence of compliance with requirement ${criteriaId}.
 
 Be lenient, thorough, and provide actionable insights in your assessment.
 
@@ -587,6 +673,12 @@ Return JSON response only:
     const text = metadata.extractedText;
     const language = metadata.language;
     
+    if (metadata.isVisualDocument) {
+      return language === 'ar' 
+        ? `وثيقة بصرية (${metadata.fileType}) تم تحليلها باستخدام تقنية الرؤية الاصطناعية. الملف: ${metadata.filename}`
+        : `Visual document (${metadata.fileType}) analyzed using AI Vision technology. File: ${metadata.filename}`;
+    }
+    
     if (!text || text.trim().length < 10) {
       return language === 'ar' 
         ? 'لا يوجد محتوى نصي كافٍ في الوثيقة للتحليل'
@@ -621,9 +713,11 @@ Return JSON response only:
     metadata: DocumentMetadata,
     error: any
   ): ComplianceScore {
+    const analysisMethod = metadata.isVisualDocument ? 'Vision API' : 'text analysis';
+    
     const findings = language === 'ar' 
-      ? `حدث خطأ أثناء تحليل الوثيقة "${metadata.filename}": ${error instanceof Error ? error.message : 'خطأ غير معروف'}. تم العثور على ${evidence.length} دليل. الوثيقة تحتوي على ${metadata.wordCount} كلمة بثقة استخراج ${metadata.confidence}%.`
-      : `Error occurred while analyzing document "${metadata.filename}": ${error instanceof Error ? error.message : 'Unknown error'}. Found ${evidence.length} evidence pieces. Document contains ${metadata.wordCount} words with ${metadata.confidence}% extraction confidence.`;
+      ? `حدث خطأ أثناء تحليل الوثيقة "${metadata.filename}" باستخدام ${analysisMethod}: ${error instanceof Error ? error.message : 'خطأ غير معروف'}. تم العثور على ${evidence.length} دليل. الوثيقة تحتوي على ${metadata.wordCount} كلمة بثقة استخراج ${metadata.confidence}%.`
+      : `Error occurred while analyzing document "${metadata.filename}" using ${analysisMethod}: ${error instanceof Error ? error.message : 'Unknown error'}. Found ${evidence.length} evidence pieces. Document contains ${metadata.wordCount} words with ${metadata.confidence}% extraction confidence.`;
 
     const recommendations = language === 'ar' 
       ? [
@@ -647,5 +741,12 @@ Return JSON response only:
       recommendations,
       documentContent: this.generateDocumentContentSummary(metadata)
     };
+  }
+
+  private formatFileSize(bytes: number): string {
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   }
 }

@@ -26,6 +26,8 @@ export interface DocumentMetadata {
   extractedText: string;
   wordCount: number;
   confidence: number;
+  base64Image?: string; // New field for Vision API
+  isVisualDocument?: boolean; // Flag to indicate if document should use Vision API
 }
 
 export interface Evidence {

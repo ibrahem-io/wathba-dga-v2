@@ -1,6 +1,6 @@
 import { BaseAgent } from './BaseAgent';
 import { DocumentMetadata } from './types';
-import { extractTextFromFile, detectLanguage } from '../utils/fileExtractor';
+import { extractTextFromFile, detectLanguage, fileToBase64, isVisualDocument } from '../utils/fileExtractor';
 
 interface DocumentParserInput {
   file: File;
@@ -18,22 +18,49 @@ export class DocumentParserAgent extends BaseAgent {
     try {
       console.log(`🔍 Starting enhanced document parsing for: ${file.name} (${file.type}, ${this.formatFileSize(file.size)})`);
 
-      // Extract text from file (now includes enhanced PDF processing and OCR support)
-      const extractedText = await this.createErrorBoundary(
-        () => extractTextFromFile(file),
-        ''
-      );
+      // Check if this is a visual document that should use Vision API
+      const isVisual = isVisualDocument(file);
+      console.log(`📄 Document type: ${isVisual ? 'Visual (will use Vision API)' : 'Text-based'}`);
 
-      console.log(`📄 Text extraction completed: ${extractedText.length} characters extracted`);
+      let extractedText = '';
+      let base64Image: string | undefined;
+      let confidence = 70;
 
-      if (!extractedText || extractedText.trim().length < 10) {
+      if (isVisual) {
+        // For visual documents, convert to base64 for Vision API
+        try {
+          base64Image = await fileToBase64(file);
+          console.log(`📷 Converted to base64 for Vision API: ${base64Image.length} characters`);
+          
+          // For visual documents, we'll let the Vision API handle text extraction
+          // Set a placeholder text that indicates Vision API should be used
+          extractedText = `[VISUAL_DOCUMENT_FOR_VISION_API]`;
+          confidence = 85; // High confidence for Vision API processing
+        } catch (error) {
+          console.warn(`⚠️ Failed to convert visual document to base64, falling back to text extraction:`, error);
+          // Fallback to traditional text extraction
+          extractedText = await this.createErrorBoundary(
+            () => extractTextFromFile(file),
+            ''
+          );
+        }
+      } else {
+        // For text-based documents (DOCX, TXT), use traditional extraction
+        extractedText = await this.createErrorBoundary(
+          () => extractTextFromFile(file),
+          ''
+        );
+        console.log(`📄 Text extraction completed: ${extractedText.length} characters extracted`);
+      }
+
+      // For non-visual documents, validate text content
+      if (!isVisual && (!extractedText || extractedText.trim().length < 10)) {
         console.warn(`⚠️ Insufficient text content extracted from ${file.name}`);
         
-        // Provide specific guidance based on file type
         let errorMessage = 'Insufficient text content extracted from document.';
         
         if (file.type === 'application/pdf') {
-          errorMessage += ' This PDF may be image-based or scanned. The system attempted both text extraction and OCR processing.';
+          errorMessage += ' This PDF may be image-based or scanned. The system will attempt Vision API processing.';
         } else if (file.type.startsWith('image/')) {
           errorMessage += ' OCR processing may have failed due to poor image quality or unreadable text.';
         } else {
@@ -43,15 +70,17 @@ export class DocumentParserAgent extends BaseAgent {
         throw new Error(errorMessage);
       }
 
-      // Detect language with enhanced detection
-      const language = detectLanguage(extractedText);
+      // Detect language (for visual documents, we'll detect later from Vision API response)
+      const language = isVisual ? 'ar' : detectLanguage(extractedText); // Default to Arabic for visual docs
       console.log(`🌐 Language detected: ${language}`);
 
-      // Calculate word count with better Arabic support
-      const wordCount = this.calculateWordCount(extractedText, language);
+      // Calculate word count (for visual documents, this will be updated after Vision API processing)
+      const wordCount = isVisual ? 0 : this.calculateWordCount(extractedText, language);
 
-      // Calculate extraction confidence with enhanced metrics
-      const confidence = this.calculateExtractionConfidence(extractedText, file, language);
+      // Calculate extraction confidence
+      if (!isVisual) {
+        confidence = this.calculateExtractionConfidence(extractedText, file, language);
+      }
 
       const metadata: DocumentMetadata = {
         filename: file.name,
@@ -60,14 +89,18 @@ export class DocumentParserAgent extends BaseAgent {
         language,
         extractedText: extractedText.substring(0, 50000), // Limit text size
         wordCount,
-        confidence
+        confidence,
+        base64Image,
+        isVisualDocument: isVisual
       };
 
       console.log(`✅ Document parsed successfully: ${file.name}
+        - Type: ${isVisual ? 'Visual (Vision API)' : 'Text-based'}
         - Language: ${language}
         - Words: ${wordCount}
         - Confidence: ${confidence}%
-        - Text length: ${extractedText.length} characters`);
+        - Text length: ${extractedText.length} characters
+        - Has base64: ${!!base64Image}`);
       
       return metadata;
 
@@ -78,8 +111,8 @@ export class DocumentParserAgent extends BaseAgent {
       let errorMessage = 'Failed to parse document';
       
       if (error instanceof Error) {
-        if (error.message.includes('OCR')) {
-          errorMessage = `OCR processing failed: ${error.message}. Please ensure the image contains clear, readable text.`;
+        if (error.message.includes('Vision API')) {
+          errorMessage = `Vision API processing failed: ${error.message}. Please ensure the image contains clear, readable text.`;
         } else if (error.message.includes('Insufficient text')) {
           errorMessage = `Document content issue: ${error.message}`;
         } else if (error.message.includes('PDF extraction failed')) {
@@ -151,9 +184,9 @@ export class DocumentParserAgent extends BaseAgent {
       confidence -= 10;
     }
 
-    // Special handling for image files (OCR uncertainty)
+    // Special handling for image files (will use Vision API)
     if (file.type.startsWith('image/')) {
-      confidence = Math.min(confidence, 85); // Cap OCR confidence
+      confidence = 85; // High confidence for Vision API
     }
 
     return Math.min(95, Math.max(50, confidence));
@@ -164,10 +197,11 @@ export class DocumentParserAgent extends BaseAgent {
       'text/plain': 15,
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 10,
       'application/pdf': 5,
-      'image/jpeg': 0,
-      'image/png': 0,
-      'image/tiff': 2,
-      'image/bmp': 0
+      'image/jpeg': 10, // Higher bonus for Vision API
+      'image/png': 10,
+      'image/tiff': 12,
+      'image/bmp': 8,
+      'image/webp': 10
     };
 
     return bonuses[fileType] || 0;

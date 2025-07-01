@@ -28,6 +28,37 @@ export async function extractTextFromFile(file: File): Promise<string> {
   });
 }
 
+export async function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    
+    reader.onload = () => {
+      const result = reader.result as string;
+      // Remove the data URL prefix to get just the base64 string
+      const base64 = result.split(',')[1];
+      resolve(base64);
+    };
+    
+    reader.onerror = () => reject(new Error('Failed to convert file to base64'));
+    reader.readAsDataURL(file);
+  });
+}
+
+export function isVisualDocument(file: File): boolean {
+  // Determine if file should be processed with Vision API
+  const visualTypes = [
+    'image/jpeg',
+    'image/jpg', 
+    'image/png',
+    'image/tiff',
+    'image/bmp',
+    'image/webp',
+    'application/pdf' // PDFs can benefit from Vision API for scanned documents
+  ];
+  
+  return visualTypes.includes(file.type);
+}
+
 async function extractTextFromTXT(arrayBuffer: ArrayBuffer): Promise<string> {
   const uint8Array = new Uint8Array(arrayBuffer);
   
@@ -280,10 +311,10 @@ async function extractTextFromDOCX(arrayBuffer: ArrayBuffer): Promise<string> {
       if (content) {
         // Decode HTML entities
         const decoded = content
-          .replace(/&lt;/g, '<')
-          .replace(/&gt;/g, '>')
-          .replace(/&amp;/g, '&')
-          .replace(/&quot;/g, '"')
+          .replace(/</g, '<')
+          .replace(/>/g, '>')
+          .replace(/&/g, '&')
+          .replace(/"/g, '"')
           .replace(/&apos;/g, "'");
         extractedText += decoded + ' ';
       }
