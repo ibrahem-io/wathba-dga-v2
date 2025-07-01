@@ -322,10 +322,10 @@ async function extractTextFromDOCX(arrayBuffer: ArrayBuffer): Promise<string> {
     if (content) {
       // Decode HTML entities
       const decoded = content
-        .replace(/&lt;/g, '<')
-        .replace(/&gt;/g, '>')
-        .replace(/&amp;/g, '&')
-        .replace(/&quot;/g, '"')
+        .replace(/</g, '<')
+        .replace(/>/g, '>')
+        .replace(/&/g, '&')
+        .replace(/"/g, '"')
         .replace(/&apos;/g, "'");
       extractedText += decoded + ' ';
     }
