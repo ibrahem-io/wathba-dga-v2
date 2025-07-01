@@ -42,51 +42,29 @@ export class ComplianceScorerAgent extends BaseAgent {
     }
 
     try {
-      // If we have very little content, do a basic text analysis instead of relying only on evidence
-      const shouldAnalyzeFullText = evidence.length === 0 || documentMetadata.wordCount < 50;
-      
-      if (shouldAnalyzeFullText && documentMetadata.extractedText.length > 20) {
-        console.log(`Performing full text analysis for criteria ${criteriaId} due to limited evidence`);
-        return await this.analyzeFullText(documentMetadata, criteriaId, language);
-      }
+      console.log(`🔍 Starting compliance scoring for criteria ${criteriaId}`);
+      console.log(`📄 Document: ${documentMetadata.filename} (${documentMetadata.wordCount} words, ${documentMetadata.confidence}% confidence)`);
+      console.log(`🔍 Evidence pieces: ${evidence.length}`);
 
-      const prompt = this.buildPrompt(criteriaId, language, documentMetadata, evidence);
-      
-      const messages = [
-        new SystemMessage(prompt.system),
-        new HumanMessage(prompt.user)
-      ];
+      // Always analyze the full text for better accuracy
+      const result = await this.analyzeFullText(documentMetadata, criteriaId, language, evidence);
 
-      console.log(`Scoring compliance for criteria ${criteriaId} with ${evidence.length} evidence pieces`);
-      
-      const response = await this.llm.invoke(messages);
-      const result = this.parseResponse(response.content as string, criteriaId, evidence, documentMetadata);
-
-      console.log(`Compliance scoring completed for criteria ${criteriaId}: ${result.status} (${result.score}%)`);
+      console.log(`✅ Compliance scoring completed for criteria ${criteriaId}: ${result.status} (${result.score}%)`);
       return result;
 
     } catch (error) {
-      console.error(`Compliance scoring failed for criteria ${criteriaId}:`, error);
+      console.error(`❌ Compliance scoring failed for criteria ${criteriaId}:`, error);
       
-      // Try full text analysis as fallback if we have content
-      if (documentMetadata.extractedText.length > 20) {
-        console.log(`Attempting full text analysis as fallback for criteria ${criteriaId}`);
-        try {
-          return await this.analyzeFullText(documentMetadata, criteriaId, language);
-        } catch (fallbackError) {
-          console.error(`Full text analysis also failed:`, fallbackError);
-        }
-      }
-      
-      // Final fallback
-      return this.createFallbackScore(criteriaId, evidence, language, documentMetadata);
+      // Create a fallback score with error information
+      return this.createErrorScore(criteriaId, evidence, language, documentMetadata, error);
     }
   }
 
   private async analyzeFullText(
     metadata: DocumentMetadata, 
     criteriaId: string, 
-    language: 'ar' | 'en'
+    language: 'ar' | 'en',
+    evidence: Evidence[]
   ): Promise<ComplianceScore> {
     if (!this.llm) {
       throw new Error('LLM not initialized');
@@ -94,28 +72,57 @@ export class ComplianceScorerAgent extends BaseAgent {
 
     const systemPrompt = this.getDetailedAuditPrompt(criteriaId, language);
 
-    // Limit text to prevent token overflow
-    const maxTextLength = 8000;
+    // Limit text to prevent token overflow but keep more content for better analysis
+    const maxTextLength = 12000; // Increased from 8000
     const textToAnalyze = metadata.extractedText.length > maxTextLength 
       ? metadata.extractedText.substring(0, maxTextLength) + '...'
       : metadata.extractedText;
 
+    // Include evidence in the analysis
+    const evidenceText = evidence.length > 0 
+      ? evidence.map((e, i) => `${i + 1}. ${e.text} (صلة: ${Math.round(e.relevance * 100)}%)`).join('\n')
+      : (language === 'ar' ? 'لم يتم العثور على أدلة مباشرة' : 'No direct evidence found');
+
     const userPrompt = language === 'ar' ? `
 الوثيقة: ${metadata.filename}
+اللغة المكتشفة: ${metadata.language}
 عدد الكلمات: ${metadata.wordCount}
+ثقة الاستخراج: ${metadata.confidence}%
+
+الأدلة المستخرجة:
+${evidenceText}
 
 النص الكامل للتحليل:
 ${textToAnalyze}
 
-قم بتحليل هذا النص للبحث عن أي دليل على الامتثال للمتطلب ${criteriaId} وفقاً للإرشادات التفصيلية المحددة.
+قم بتحليل هذا النص بعناية للبحث عن أي دليل على الامتثال للمتطلب ${criteriaId} وفقاً للإرشادات التفصيلية المحددة.
+
+تعليمات مهمة:
+1. ابحث عن أي إشارة أو دليل حتى لو كان غير مباشر
+2. استخدم السياق العام للوثيقة لفهم المحتوى
+3. كن متساهلاً في التقييم - أي إشارة للموضوع تعتبر إيجابية
+4. إذا كان النص غير واضح، ركز على الكلمات المفتاحية والمفاهيم العامة
+5. قدم تحليلاً مفصلاً حتى لو كانت الأدلة محدودة
 ` : `
 Document: ${metadata.filename}
+Detected Language: ${metadata.language}
 Word Count: ${metadata.wordCount}
+Extraction Confidence: ${metadata.confidence}%
+
+Extracted Evidence:
+${evidenceText}
 
 Full text for analysis:
 ${textToAnalyze}
 
-Analyze this text for any evidence of compliance with requirement ${criteriaId} according to the detailed guidelines specified.
+Carefully analyze this text for any evidence of compliance with requirement ${criteriaId} according to the detailed guidelines specified.
+
+Important instructions:
+1. Look for any indication or evidence even if indirect
+2. Use the general context of the document to understand content
+3. Be lenient in evaluation - any reference to the topic counts as positive
+4. If text is unclear, focus on keywords and general concepts
+5. Provide detailed analysis even if evidence is limited
 `;
 
     const messages = [
@@ -124,7 +131,7 @@ Analyze this text for any evidence of compliance with requirement ${criteriaId} 
     ];
 
     const response = await this.llm.invoke(messages);
-    return this.parseResponse(response.content as string, criteriaId, [], metadata);
+    return this.parseResponse(response.content as string, criteriaId, evidence, metadata);
   }
 
   private getDetailedAuditPrompt(criteriaId: string, language: 'ar' | 'en'): string {
@@ -137,52 +144,31 @@ Analyze this text for any evidence of compliance with requirement ${criteriaId} 
 إطار التقييم الشامل:
 
 المتطلب الأول: دراسة الوعي بالتحول الرقمي
-ابحث عن:
-- وجود وثيقة دراسة رسمية
-- تقييم مستوى الوعي الحالي بالتحول الرقمي بين الموظفين
-- فهم أهمية التحول الرقمي
-- معرفة الموظفين بخطط ومبادرات التحول الرقمي
-- الوعي بنسب الإنجاز/التقدم المحرز
-- فهم مجالات/نطاقات التحول الرقمي
-- تحديد الفجوات عبر المستويات التنظيمية المختلفة
-
-معايير التقييم:
-✅ مطابق: الدراسة تشمل جميع العناصر المطلوبة مع منهجية واضحة ونتائج
-⚠️ مطابق جزئياً: الدراسة تغطي معظم العناصر لكن تفتقر للعمق في بعض المجالات
-❌ غير مطابق: لا توجد دراسة أو الدراسة تفتقر لعناصر مطلوبة مهمة
-
-العلامات التحذيرية:
-- دراسات عامة غير محددة للتحول الرقمي
-- دراسات أقدم من سنتين بدون تحديثات
-- غياب تحليل الفجوات أو التوصيات
+ابحث عن أي إشارة إلى:
+- دراسات أو تقييمات أو مسوحات
+- تحليل الوعي أو المعرفة أو المهارات
+- التحول الرقمي أو الرقمنة أو التقنية
+- فهم أو إدراك أو وعي الموظفين
+- خطط أو مبادرات أو مشاريع رقمية
+- فجوات أو احتياجات تدريبية
 
 المتطلب الثاني: تطوير برامج التوعية
-ابحث عن:
-- تحديد واضح للمجموعات المستهدفة:
-  * فئات/أقسام محددة من الموظفين
-  * مستويات إدارية مختلفة
-  * أهداف توعوية محددة لكل مجموعة
-- استراتيجية التنفيذ:
-  * قنوات وطرق التواصل المختارة
-  * جدول زمني لتنفيذ البرنامج
-  * خطط تخصيص الموارد
+ابحث عن أي إشارة إلى:
+- برامج تدريبية أو توعوية أو تطويرية
+- ورش عمل أو دورات أو جلسات تدريب
+- مجموعات مستهدفة أو فئات موظفين
+- استراتيجيات تواصل أو تنفيذ
+- جداول زمنية أو خطط تنفيذ
 
-معايير التقييم:
-✅ مطابق: برنامج شامل مع تحديد واضح لجميع العناصر
-⚠️ مطابق جزئياً: البرنامج موجود لكن يفتقر لبعض العناصر الاستراتيجية
-❌ غير مطابق: لا يوجد برنامج أو توثيق تخطيط غير كافٍ
+معايير التقييم المتساهلة:
+✅ مطابق (80-100%): وجود إشارات واضحة لمعظم العناصر
+⚠️ مطابق جزئياً (40-79%): وجود بعض الإشارات أو العناصر
+❌ غير مطابق (0-39%): عدم وجود إشارات واضحة
 
-قائمة مراجعة الأدلة المطلوبة:
-- [ ] وثيقة دراسة الوعي الرسمية
-- [ ] نتائج تحليل الفجوات
-- [ ] توثيق برنامج التوعية
-- [ ] تحديد المجموعات المستهدفة
-- [ ] الجدول الزمني ومنهجية التنفيذ
+الكلمات المفتاحية للبحث (كن مرناً في البحث):
+دراسة، تحليل، تقييم، مسح، استطلاع، الوعي، المعرفة، التحول، الرقمي، التقنية، الرقمنة، برنامج، تدريب، تطوير، ورشة، دورة، موظف، منسوب، مهارة، ثقافة
 
-الكلمات المفتاحية للبحث:
-دراسات، دراسة، تحليل، تقييم، مسح، استطلاع، الوعي، التحول الرقمي، الثقافة الرقمية، المهارات الرقمية، برامج توعوية، برامج تدريبية، ورش عمل، دورات، التدريب، التطوير، التعلم، المعرفة
-
-كن متساهلاً في التقييم - ابحث عن أي إشارة لهذه العناصر حتى لو كانت بسيطة.
+كن متساهلاً جداً - أي إشارة لهذه المفاهيم حتى لو كانت بسيطة تعتبر إيجابية.
 
 أرجع استجابة JSON فقط:
 {
@@ -200,52 +186,31 @@ Objective: Determine the level of digital transformation awareness among governm
 Comprehensive Assessment Framework:
 
 Requirement 1: Digital Transformation Awareness Study
-Look for:
-- Existence of a formal study document
-- Assessment of current digital transformation awareness level among employees
-- Understanding of digital transformation importance
-- Employee knowledge of digital transformation plans and initiatives
-- Awareness of achievement rates/progress percentages
-- Understanding of digital transformation domains/areas
-- Gap identification across different organizational levels
-
-Evaluation Criteria:
-✅ COMPLIANT: Study includes all required elements with clear methodology and findings
-⚠️ PARTIALLY COMPLIANT: Study covers most elements but lacks depth in some areas
-❌ NON-COMPLIANT: No study exists or study lacks significant required elements
-
-Red Flags:
-- Generic studies not specific to digital transformation
-- Studies older than 2 years without updates
-- Missing gap analysis or recommendations
+Look for any reference to:
+- Studies, assessments, or surveys
+- Analysis of awareness, knowledge, or skills
+- Digital transformation, digitization, or technology
+- Employee understanding, perception, or awareness
+- Digital plans, initiatives, or projects
+- Gaps or training needs
 
 Requirement 2: Awareness Programs Development
-Look for:
-- Clear target groups definition:
-  * Specific employee categories/departments
-  * Different administrative levels
-  * Targeted awareness objectives for each group
-- Implementation strategy:
-  * Selected communication channels and methods
-  * Timeline for program implementation
-  * Resource allocation plans
+Look for any reference to:
+- Training, awareness, or development programs
+- Workshops, courses, or training sessions
+- Target groups or employee categories
+- Communication or implementation strategies
+- Timelines or implementation plans
 
-Evaluation Criteria:
-✅ COMPLIANT: Comprehensive program with all elements clearly defined
-⚠️ PARTIALLY COMPLIANT: Program exists but missing some strategic elements
-❌ NON-COMPLIANT: No program or inadequate planning documentation
+Lenient Evaluation Criteria:
+✅ COMPLIANT (80-100%): Clear references to most elements
+⚠️ PARTIALLY COMPLIANT (40-79%): Some references or elements present
+❌ NON-COMPLIANT (0-39%): No clear references
 
-Evidence Requirements Checklist:
-- [ ] Formal awareness study document
-- [ ] Gap analysis results
-- [ ] Awareness program documentation
-- [ ] Target group identification
-- [ ] Implementation timeline and methodology
+Keywords to search for (be flexible):
+study, analysis, assessment, survey, awareness, knowledge, transformation, digital, technology, digitization, program, training, development, workshop, course, employee, staff, skill, culture
 
-Keywords to search for:
-study, studies, analysis, assessment, survey, evaluation, awareness, digital transformation, digital culture, digital skills, awareness programs, training programs, workshops, courses, training, development, learning, knowledge
-
-Be lenient in evaluation - look for any reference to these elements even if simple.
+Be very lenient - any reference to these concepts, even simple ones, counts as positive.
 
 Return JSON response only:
 {
@@ -262,56 +227,38 @@ Return JSON response only:
 
 الهدف: تنفيذ البرامج المعتمدة لزيادة وعي الموظفين بالتحول الرقمي وقياس أثر هذه البرامج.
 
-إطار التقييم الشامل:
+ابحث عن أي إشارة إلى:
 
-المتطلب الأول: تنفيذ البرنامج
-ابحث عن:
-- أدلة على التنفيذ الفعلي للبرنامج
-- أنشطة وفعاليات موثقة
-- سجلات المشاركة والحضور
+التنفيذ والتطبيق:
+- تنفيذ أو تطبيق أو تطبق أو ينفذ
+- أنشطة أو فعاليات أو مبادرات منفذة
+- برامج أو ورش أو دورات تم تقديمها
+- مشاركة أو حضور أو تفاعل الموظفين
 
-معايير التقييم:
-- يجب أن تكون البرامج منفذة فعلياً وليس مجرد مخططة
-- أدلة على أنشطة منتظمة/مستمرة
-- تقديم متعدد الأشكال (ورش عمل، ندوات، محتوى رقمي)
+القياس والمتابعة:
+- قياس أو تقييم أو مراجعة
+- مؤشرات أو نسب أو إحصائيات
+- نتائج أو تقارير أو تقدم
+- فعالية أو أثر أو تأثير
 
-المتطلب الثاني: ورش عمل الامتثال
-ابحث عن:
-- ورش عمل محددة حول الامتثال للوائح تقنية المعلومات والاتصالات
-- محتوى يغطي القوانين والسياسات والإرشادات ذات الصلة
-- سجلات الحضور ومواد التدريب
+التدريب والتوعية:
+- ورش عمل أو دورات تدريبية
+- جلسات توعية أو تثقيف
+- محتوى تدريبي أو مواد تعليمية
+- مدربين أو محاضرين
 
-المتطلب الثالث: التواصل حول خطط التحول الرقمي
-ابحث عن:
-- فعاليات/جلسات تشرح خطط التحول الرقمي التنظيمية
-- تقارير التقدم للموظفين
-- نهج تواصل متعدد القنوات
+القيادة والإشراف:
+- مشاركة القيادة أو الإدارة العليا
+- إشراف أو متابعة أو توجيه
+- لجان أو فرق عمل
+- تقارير إدارية أو محاضر اجتماعات
 
-المتطلب الرابع: التبني الرقمي بقيادة الإدارة
-ابحث عن:
-- أدلة على مشاركة القيادة في أنشطة التوعية
-- مبادرات أو عروض تقديمية بقيادة القيادة
-- توثيق مشاركة الإدارة العليا
+معايير التقييم المتساهلة:
+✅ مطابق (70-100%): وجود إشارات للتنفيذ والقياس
+⚠️ مطابق جزئياً (35-69%): وجود إشارات للتنفيذ أو القياس
+❌ غير مطابق (0-34%): عدم وجود إشارات واضحة
 
-المتطلب الخامس: المراقبة والتقارير
-ابحث عن:
-- تقارير تقدم منتظمة حول أنشطة التوعية
-- إشراف اللجنة (لجنة المعاملات الإلكترونية/التحول الرقمي)
-- خطط عمل تصحيحية بناءً على نتائج المراقبة
-
-الأدلة المطلوبة (الحد الأدنى):
-- [ ] 3 عينات من توثيق أنشطة التوعية
-- [ ] 3 عينات من أدلة مشاركة القيادة
-- [ ] عينة واحدة من تقارير التقدم ومحاضر اللجان
-- [ ] توثيق الإجراءات التصحيحية المتخذة
-
-معايير الجودة:
-- يجب أن تكون الأدلة حديثة (خلال 12 شهراً)
-- يجب أن تظهر الوثائق التنفيذ الفعلي وليس مجرد التخطيط
-- ربط واضح بين الأنشطة وأهداف التحول الرقمي
-
-الكلمات المفتاحية:
-التنفيذ، التطبيق، تطبق، ينفذ، تم تنفيذ، قياس، مقاييس، مؤشرات، نسب الإنجاز، تقييم، تقييم الفعالية، مراجعة، تحديث، البرامج، الأنشطة، المبادرات
+كن متساهلاً جداً في التقييم - أي إشارة للتنفيذ أو الأنشطة تعتبر إيجابية.
 
 أرجع استجابة JSON فقط:
 {
@@ -326,56 +273,38 @@ Return JSON response only:
 
 Objective: Implement approved programs to increase employee awareness of digital transformation and measure the impact of these programs.
 
-Comprehensive Assessment Framework:
+Look for any reference to:
 
-Requirement 1: Program Implementation
-Look for:
-- Evidence of actual program execution
-- Documented activities and events
-- Participation records and attendance
+Implementation and Application:
+- Implementation, execution, or application
+- Activities, events, or implemented initiatives
+- Programs, workshops, or courses delivered
+- Employee participation, attendance, or engagement
 
-Evaluation Standards:
-- Programs must be actively implemented, not just planned
-- Evidence of regular/ongoing activities
-- Multiple format delivery (workshops, seminars, digital content)
+Measurement and Monitoring:
+- Measurement, evaluation, or review
+- Indicators, rates, or statistics
+- Results, reports, or progress
+- Effectiveness, impact, or influence
 
-Requirement 2: Compliance Training Workshops
-Look for:
-- Workshops specifically about IT and communications regulations compliance
-- Content covering relevant laws, policies, and guidelines
-- Attendance records and training materials
+Training and Awareness:
+- Workshops or training courses
+- Awareness or education sessions
+- Training content or educational materials
+- Trainers or instructors
 
-Requirement 3: Digital Transformation Plans Communication
-Look for:
-- Events/sessions explaining organizational digital transformation plans
-- Progress reporting to employees
-- Multi-channel communication approach
+Leadership and Supervision:
+- Leadership or senior management participation
+- Supervision, monitoring, or guidance
+- Committees or working teams
+- Management reports or meeting minutes
 
-Requirement 4: Leadership-Driven Digital Adoption
-Look for:
-- Evidence of leadership participation in awareness activities
-- Leadership-led initiatives or presentations
-- Senior management engagement documentation
+Lenient Evaluation Criteria:
+✅ COMPLIANT (70-100%): References to implementation and measurement
+⚠️ PARTIALLY COMPLIANT (35-69%): References to implementation or measurement
+❌ NON-COMPLIANT (0-34%): No clear references
 
-Requirement 5: Monitoring and Reporting
-Look for:
-- Regular progress reports on awareness activities
-- Committee oversight (Electronic Transactions/Digital Transformation Committee)
-- Corrective action plans based on monitoring results
-
-Evidence Requirements (Minimum):
-- [ ] 3 samples of awareness activities documentation
-- [ ] 3 samples of leadership participation evidence
-- [ ] 1 sample of progress reports and committee minutes
-- [ ] Documentation of corrective actions taken
-
-Quality Standards:
-- Evidence must be recent (within 12 months)
-- Documents must show actual implementation, not just planning
-- Clear linkage between activities and digital transformation objectives
-
-Keywords:
-implementation, execute, implement, carried out, conducted, measurement, metrics, indicators, achievement rates, evaluation, effectiveness evaluation, review, update, programs, activities, initiatives
+Be very lenient in evaluation - any reference to implementation or activities counts as positive.
 
 Return JSON response only:
 {
@@ -392,42 +321,38 @@ Return JSON response only:
 
 الهدف: تعزيز اعتماد الأدوات التقنية لتحسين أداء العمل اليومي والروتيني للموظفين.
 
-إطار التقييم الشامل:
+ابحث عن أي إشارة إلى:
 
-المتطلب الأول: آلية طلب البرمجيات والتراخيص
-ابحث عن:
-- عملية رسمية للموظفين لطلب الأدوات الرقمية/البرمجيات
-- سير عمل موافقة واضح
-- معايير أوقات الاستجابة
-- تخصيص الميزانية لشراء الأدوات
+الأدوات والتقنيات:
+- أدوات تقنية أو رقمية أو إلكترونية
+- أنظمة أو برمجيات أو تطبيقات
+- منصات أو حلول تقنية
+- تقنيات أو تكنولوجيا
 
-معايير التقييم:
-- يجب أن تكون العملية موثقة ومتاحة
-- أدلة على طلبات فعلية تم معالجتها
-- أوقات استجابة معقولة
+الاستخدام والاعتماد:
+- استخدام أو اعتماد أو تطبيق
+- تشغيل أو تفعيل أو تنفيذ
+- الاستفادة من أو العمل بـ
+- تحسين أو تطوير الأداء
 
-المتطلب الثاني: برامج التدريب على الأدوات الرقمية
-ابحث عن:
-- ورش عمل تدريبية مجدولة أو دورات قصيرة
-- مواد ومناهج تدريبية
-- مؤهلات المدربين
-- تقييم فعالية التدريب
+التدريب والدعم:
+- تدريب على الأدوات أو الأنظمة
+- دعم تقني أو مساعدة فنية
+- ورش عمل تقنية أو دورات
+- إرشادات أو أدلة استخدام
 
-المتطلب الثالث: تدريب الأشخاص المخولين على أنظمة المعلومات
-ابحث عن:
-- سجلات تدريب لمستخدمي النظام المخولين
-- برامج تدريب قائمة على الأدوار
-- مكونات تدريب الأمان والامتثال
-- التحقق من كفاءة المستخدم
+العمليات والإجراءات:
+- تحسين العمليات أو الإجراءات
+- أتمتة أو رقمنة المهام
+- تسهيل أو تبسيط العمل
+- كفاءة أو فعالية الأداء
 
-الأدلة المطلوبة:
-- [ ] آلية/عملية موثقة لطلبات الأدوات
-- [ ] توثيق برنامج التدريب وسجلات الإكمال
-- [ ] أدلة على استعداد الموظفين لاعتماد الأدوات
-- [ ] سجلات تدريب استخدام النظام
+معايير التقييم المتساهلة:
+✅ مطابق (70-100%): وجود إشارات واضحة للأدوات والاستخدام
+⚠️ مطابق جزئياً (35-69%): وجود إشارات للأدوات أو الاستخدام
+❌ غير مطابق (0-34%): عدم وجود إشارات واضحة
 
-الكلمات المفتاحية:
-الأدوات التقنية، الأدوات الرقمية، التقنيات، الأنظمة، البرمجيات، التطبيقات، المنصات، الدعم التقني، المساعدة التقنية، التدريب التقني، الاستخدام، الاعتماد، التطبيق
+كن متساهلاً - أي إشارة للتقنية أو الأدوات تعتبر إيجابية.
 
 أرجع استجابة JSON فقط:
 {
@@ -442,42 +367,38 @@ Return JSON response only:
 
 Objective: Enhance adoption of technical tools to improve employees' daily and routine work performance.
 
-Comprehensive Assessment Framework:
+Look for any reference to:
 
-Requirement 1: Software and License Request Mechanism
-Look for:
-- Formal process for employees to request digital tools/software
-- Clear approval workflow
-- Response time standards
-- Budget allocation for tool procurement
+Tools and Technologies:
+- Technical, digital, or electronic tools
+- Systems, software, or applications
+- Platforms or technical solutions
+- Technologies or technology
 
-Evaluation Standards:
-- Process must be documented and accessible
-- Evidence of actual requests processed
-- Reasonable response times
+Usage and Adoption:
+- Use, adoption, or application
+- Operation, activation, or implementation
+- Utilization or working with
+- Performance improvement or development
 
-Requirement 2: Training Programs for Digital Tools
-Look for:
-- Scheduled training workshops or short courses
-- Training materials and curricula
-- Instructor qualifications
-- Training effectiveness assessment
+Training and Support:
+- Training on tools or systems
+- Technical support or assistance
+- Technical workshops or courses
+- Guidelines or user manuals
 
-Requirement 3: Authorized Personnel Training on Information Systems
-Look for:
-- Training records for authorized system users
-- Role-based training programs
-- Security and compliance training components
-- User competency verification
+Operations and Procedures:
+- Process or procedure improvement
+- Automation or digitization of tasks
+- Facilitating or simplifying work
+- Efficiency or performance effectiveness
 
-Evidence Requirements:
-- [ ] Documented mechanism/process for tool requests
-- [ ] Training program documentation and completion records
-- [ ] Evidence of employee preparedness for tool adoption
-- [ ] System usage training records
+Lenient Evaluation Criteria:
+✅ COMPLIANT (70-100%): Clear references to tools and usage
+⚠️ PARTIALLY COMPLIANT (35-69%): References to tools or usage
+❌ NON-COMPLIANT (0-34%): No clear references
 
-Keywords:
-technical tools, digital tools, technologies, systems, software, applications, platforms, technical support, technical assistance, technical training, usage, adoption, utilization
+Be lenient - any reference to technology or tools counts as positive.
 
 Return JSON response only:
 {
@@ -494,46 +415,38 @@ Return JSON response only:
 
 الهدف: وضع استراتيجيات وخطط للتطوير المستمر للثقافة الرقمية في الجهة ومتابعة تطبيقها وقياس أثرها على الأداء العام والتحسين المستمر.
 
-إطار التقييم الشامل:
+ابحث عن أي إشارة إلى:
 
-المتطلب الأول: الاستراتيجيات والخطط
-ابحث عن:
-- أي استراتيجية أو خطة للتطوير
+الاستراتيجيات والخطط:
+- استراتيجية أو استراتيجيات
+- خطة أو خطط أو تخطيط
 - رؤية أو أهداف مستقبلية
-- مبادرات التحسين أو التطوير
-- خطط طويلة المدى أو قصيرة المدى
+- مبادرات أو مشاريع تطويرية
 
-المتطلب الثاني: المتابعة والتطبيق
-ابحث عن:
-- متابعة تنفيذ الخطط أو المبادرات
-- مراجعة دورية للأنشطة
-- تقارير عن التقدم أو الإنجازات
-- آليات المتابعة والمراقبة
+التطوير والتحسين:
+- تطوير أو تحسين أو تعزيز
+- تطوير مستمر أو تحسين مستمر
+- نمو أو تقدم أو تقدم
+- رفع أو زيادة القدرات
 
-المتطلب الثالث: قياس الأثر والتحسين
-ابحث عن:
-- قياس أثر التطوير على الأداء
-- مؤشرات التحسن أو النجاح
-- عمليات التحسين المستمر
-- تطوير القدرات أو الممارسات
+المتابعة والقياس:
+- متابعة أو مراقبة أو رصد
+- قياس أو تقييم أو مراجعة
+- مؤشرات أو نتائج أو تقارير
+- أثر أو تأثير على الأداء
 
-معايير التقييم:
-✅ مطابق كامل: جميع المتطلبات مستوفاة مع أدلة شاملة
-⚠️ مطابق جزئي: معظم المتطلبات مستوفاة لكن توجد فجوات
-❌ غير مطابق: متطلبات مهمة غير مستوفاة أو لا توجد أدلة
-🚫 غير قابل للتطبيق: الجهة تقدم توثيق إعفاء صحيح
+الثقافة الرقمية:
+- ثقافة رقمية أو ثقافة تقنية
+- وعي رقمي أو معرفة تقنية
+- مهارات رقمية أو قدرات تقنية
+- بيئة رقمية أو تحول رقمي
 
-معايير التصعيد:
-صعّد للمراجعة الإضافية إذا:
-- الوثائق تبدو مفبركة أو غير متسقة
-- الأدلة تشير لجهود امتثال غير حقيقية
-- فجوات كبيرة بين المزعوم والتنفيذ الفعلي
-- الجهة تدعي الإعفاء بدون تخويل مناسب
+معايير التقييم المتساهلة:
+✅ مطابق (70-100%): وجود إشارات للتطوير والمتابعة
+⚠️ مطابق جزئياً (35-69%): وجود إشارات للتطوير أو المتابعة
+❌ غير مطابق (0-34%): عدم وجود إشارات واضحة
 
-الكلمات المفتاحية:
-استراتيجية، استراتيجيات، خطة، خطط، التطوير المستمر، التحسين المستمر، التطوير، المتابعة، الرصد، المراقبة، قياس الأثر، تقييم الأثر، النتائج
-
-كن متساهلاً - أي إشارة للتخطيط المستقبلي أو التطوير أو التحسين تعتبر إيجابية.
+كن متساهلاً جداً - أي إشارة للتطوير أو التحسين تعتبر إيجابية.
 
 أرجع استجابة JSON فقط:
 {
@@ -548,46 +461,38 @@ Return JSON response only:
 
 Objective: Develop strategies and plans for continuous development of digital culture in the agency, monitor their implementation, and measure their impact on overall performance and continuous improvement.
 
-Comprehensive Assessment Framework:
+Look for any reference to:
 
-Requirement 1: Strategies and Plans
-Look for:
-- Any strategy or plan for development
+Strategies and Plans:
+- Strategy or strategies
+- Plan, plans, or planning
 - Vision or future objectives
-- Improvement or development initiatives
-- Long-term or short-term plans
+- Development initiatives or projects
 
-Requirement 2: Monitoring and Implementation
-Look for:
-- Monitoring plan or initiative implementation
-- Periodic review of activities
-- Reports on progress or achievements
-- Monitoring and oversight mechanisms
+Development and Improvement:
+- Development, improvement, or enhancement
+- Continuous development or continuous improvement
+- Growth, progress, or advancement
+- Capacity building or increasing capabilities
 
-Requirement 3: Impact Measurement and Improvement
-Look for:
-- Measuring development impact on performance
-- Improvement or success indicators
-- Continuous improvement processes
-- Capacity or practice development
+Monitoring and Measurement:
+- Monitoring, tracking, or oversight
+- Measurement, evaluation, or review
+- Indicators, results, or reports
+- Impact or effect on performance
 
-Compliance Levels:
-✅ FULL COMPLIANCE: All requirements met with comprehensive evidence
-⚠️ PARTIAL COMPLIANCE: Most requirements met but some gaps exist
-❌ NON-COMPLIANCE: Significant requirements not met or no evidence provided
-🚫 NOT APPLICABLE: Entity provides valid exemption documentation
+Digital Culture:
+- Digital culture or technical culture
+- Digital awareness or technical knowledge
+- Digital skills or technical capabilities
+- Digital environment or digital transformation
 
-Escalation Criteria:
-Escalate for further review if:
-- Documentation appears fabricated or inconsistent
-- Evidence suggests non-genuine compliance efforts
-- Significant gaps exist between claimed and actual implementation
-- Entity claims exemption without proper authorization
+Lenient Evaluation Criteria:
+✅ COMPLIANT (70-100%): References to development and monitoring
+⚠️ PARTIALLY COMPLIANT (35-69%): References to development or monitoring
+❌ NON-COMPLIANT (0-34%): No clear references
 
-Keywords:
-strategy, strategies, plan, plans, continuous development, continuous improvement, development, monitoring, tracking, oversight, impact measurement, impact assessment, results
-
-Be lenient - any reference to future planning, development, or improvement counts as positive.
+Be very lenient - any reference to development or improvement counts as positive.
 
 Return JSON response only:
 {
@@ -610,7 +515,7 @@ Return JSON response only:
 
 قم بتحليل النص للبحث عن أدلة الامتثال للمتطلب ${criteriaId}.
 
-كن شاملاً وموضوعياً في تقييمك وقدم رؤى قابلة للتنفيذ.
+كن متساهلاً وشاملاً في تقييمك وقدم رؤى قابلة للتنفيذ.
 
 أرجع استجابة JSON فقط:
 {
@@ -626,7 +531,7 @@ You are an expert auditor specialized in evaluating Saudi Arabia's Digital Gover
 
 Analyze the text for evidence of compliance with requirement ${criteriaId}.
 
-Be thorough, objective, and provide actionable insights in your assessment.
+Be lenient, thorough, and provide actionable insights in your assessment.
 
 Return JSON response only:
 {
@@ -638,58 +543,6 @@ Return JSON response only:
   "documentContent": "summary of actual content found in the document"
 }
 `;
-  }
-
-  private buildPrompt(
-    criteriaId: string, 
-    language: 'ar' | 'en', 
-    metadata: DocumentMetadata, 
-    evidence: Evidence[]
-  ) {
-    const systemPrompt = this.getDetailedAuditPrompt(criteriaId, language);
-
-    const evidenceText = evidence.length > 0 
-      ? evidence.map((e, i) => `${i + 1}. ${e.text} (${language === 'ar' ? 'الصلة' : 'Relevance'}: ${Math.round(e.relevance * 100)}%)`).join('\n')
-      : (language === 'ar' ? 'لا توجد أدلة مباشرة' : 'No direct evidence found');
-
-    // Include a sample of the document content for context
-    const maxSampleLength = 2000;
-    const documentSample = metadata.extractedText.length > maxSampleLength 
-      ? metadata.extractedText.substring(0, maxSampleLength) + '...'
-      : metadata.extractedText;
-
-    const userPrompt = language === 'ar' ? `
-الوثيقة: ${metadata.filename}
-اللغة: ${metadata.language}
-عدد الكلمات: ${metadata.wordCount}
-ثقة الاستخراج: ${metadata.confidence}%
-
-عينة من محتوى الوثيقة:
-${documentSample}
-
-الأدلة المستخرجة:
-${evidenceText}
-
-قم بتقييم الامتثال للمتطلب ${criteriaId} وفقاً للإرشادات التفصيلية المحددة.
-` : `
-Document: ${metadata.filename}
-Language: ${metadata.language}
-Word Count: ${metadata.wordCount}
-Extraction Confidence: ${metadata.confidence}%
-
-Document Content Sample:
-${documentSample}
-
-Extracted Evidence:
-${evidenceText}
-
-Evaluate compliance for requirement ${criteriaId} according to the detailed guidelines specified.
-`;
-
-    return {
-      system: systemPrompt,
-      user: userPrompt
-    };
   }
 
   private parseResponse(content: string, criteriaId: string, evidence: Evidence[], metadata: DocumentMetadata): ComplianceScore {
@@ -761,58 +614,33 @@ Evaluate compliance for requirement ${criteriaId} according to the detailed guid
     return prefix + summary.substring(0, 300) + (summary.length > 300 ? '...' : '');
   }
 
-  private createFallbackScore(
+  private createErrorScore(
     criteriaId: string, 
     evidence: Evidence[], 
     language: 'ar' | 'en',
-    metadata: DocumentMetadata
+    metadata: DocumentMetadata,
+    error: any
   ): ComplianceScore {
-    // Simple fallback scoring based on evidence
-    const evidenceCount = evidence.length;
-    const avgRelevance = evidence.length > 0 
-      ? evidence.reduce((sum, e) => sum + e.relevance, 0) / evidence.length 
-      : 0;
-
-    let score = 0;
-    let status: 'pass' | 'fail' | 'partial' = 'fail';
-
-    if (evidenceCount >= 3 && avgRelevance > 0.7) {
-      score = 75;
-      status = 'pass';
-    } else if (evidenceCount >= 2 && avgRelevance > 0.5) {
-      score = 60;
-      status = 'pass';
-    } else if (evidenceCount >= 1 && avgRelevance > 0.4) {
-      score = 45;
-      status = 'partial';
-    } else if (metadata.wordCount > 100) {
-      score = 25;
-      status = 'partial';
-    } else {
-      score = 15;
-      status = 'fail';
-    }
-
     const findings = language === 'ar' 
-      ? `تم العثور على ${evidenceCount} دليل بمتوسط صلة ${Math.round(avgRelevance * 100)}%. الوثيقة تحتوي على ${metadata.wordCount} كلمة. التقييم الآلي بسبب عدم توفر التحليل المتقدم.`
-      : `Found ${evidenceCount} evidence pieces with average relevance ${Math.round(avgRelevance * 100)}%. Document contains ${metadata.wordCount} words. Automated assessment due to unavailable advanced analysis.`;
+      ? `حدث خطأ أثناء تحليل الوثيقة "${metadata.filename}": ${error instanceof Error ? error.message : 'خطأ غير معروف'}. تم العثور على ${evidence.length} دليل. الوثيقة تحتوي على ${metadata.wordCount} كلمة بثقة استخراج ${metadata.confidence}%.`
+      : `Error occurred while analyzing document "${metadata.filename}": ${error instanceof Error ? error.message : 'Unknown error'}. Found ${evidence.length} evidence pieces. Document contains ${metadata.wordCount} words with ${metadata.confidence}% extraction confidence.`;
 
     const recommendations = language === 'ar' 
       ? [
-          'تحسين توثيق الأنشطة المتعلقة بالمتطلب',
-          'إضافة تفاصيل أكثر حول التطبيق العملي',
-          'تطوير آليات القياس والمتابعة'
+          'تحقق من جودة الوثيقة ووضوح النص',
+          'تأكد من أن الوثيقة تحتوي على محتوى ذي صلة بالمتطلب',
+          'جرب رفع الوثيقة بتنسيق مختلف إذا أمكن'
         ]
       : [
-          'Improve documentation of requirement-related activities',
-          'Add more details about practical implementation',
-          'Develop measurement and monitoring mechanisms'
+          'Check document quality and text clarity',
+          'Ensure document contains content relevant to the requirement',
+          'Try uploading the document in a different format if possible'
         ];
 
     return {
       criteriaId,
-      score,
-      status,
+      score: 0,
+      status: 'fail',
       confidence: 70,
       evidence,
       findings,
