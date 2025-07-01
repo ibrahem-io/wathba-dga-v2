@@ -71,5 +71,3 @@ export abstract class BaseAgent {
     });
   }
 }
-
-export { BaseAgent }
