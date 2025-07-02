@@ -1,7 +1,16 @@
 import * as pdfjsLib from 'pdfjs-dist';
 
-// Set up PDF.js worker
-pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.js`;
+// Set up PDF.js worker with fallback
+try {
+  // Try to use the bundled worker first
+  pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+    'pdfjs-dist/build/pdf.worker.min.js',
+    import.meta.url
+  ).toString();
+} catch (error) {
+  // Fallback to a more reliable CDN
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://unpkg.com/pdfjs-dist@4.0.379/build/pdf.worker.min.js';
+}
 
 export async function extractTextFromFile(file: File): Promise<string> {
   console.log(`🔍 Starting extraction for: ${file.name}`);
@@ -58,11 +67,14 @@ async function extractTextFromPDF(arrayBuffer: ArrayBuffer, fileName: string): P
   console.log(`📕 Processing PDF file: ${fileName}`);
   
   try {
-    // Use pdfjs-dist for browser-compatible PDF text extraction
+    // Enhanced PDF.js configuration for better compatibility
     const loadingTask = pdfjsLib.getDocument({
       data: arrayBuffer,
-      cMapUrl: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.0.379/cmaps/',
-      cMapPacked: true,
+      useSystemFonts: true,
+      disableFontFace: false,
+      useWorkerFetch: false,
+      isEvalSupported: false,
+      // Remove cMapUrl to avoid additional network requests
     });
     
     const pdf = await loadingTask.promise;
@@ -70,15 +82,24 @@ async function extractTextFromPDF(arrayBuffer: ArrayBuffer, fileName: string): P
     
     let fullText = '';
     
-    // Extract text from each page
+    // Extract text from each page with better error handling
     for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
       try {
         const page = await pdf.getPage(pageNum);
-        const textContent = await page.getTextContent();
+        const textContent = await page.getTextContent({
+          normalizeWhitespace: false,
+          disableCombineTextItems: false
+        });
         
-        // Combine text items from the page
+        // Combine text items from the page with better spacing
         const pageText = textContent.items
-          .map((item: any) => item.str)
+          .map((item: any) => {
+            if (item.str && item.str.trim()) {
+              return item.str;
+            }
+            return '';
+          })
+          .filter(text => text.length > 0)
           .join(' ');
         
         if (pageText.trim()) {
@@ -124,11 +145,117 @@ async function extractTextFromPDF(arrayBuffer: ArrayBuffer, fileName: string): P
         throw new Error(`PDF "${fileName}" is password-protected.`);
       } else if (error.message.includes('no readable text')) {
         throw new Error(`PDF "${fileName}" contains no readable text. Please convert to TXT format or use OCR.`);
+      } else if (error.message.includes('worker')) {
+        // Fallback for worker issues - try manual text extraction
+        console.log(`🔄 Worker failed, trying manual extraction for ${fileName}`);
+        return await extractTextFromPDFManual(arrayBuffer, fileName);
       }
     }
     
     throw new Error(`Failed to extract text from PDF "${fileName}". ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
+}
+
+// Fallback manual PDF text extraction
+async function extractTextFromPDFManual(arrayBuffer: ArrayBuffer, fileName: string): Promise<string> {
+  console.log(`🔧 Manual PDF extraction for: ${fileName}`);
+  
+  try {
+    const uint8Array = new Uint8Array(arrayBuffer);
+    const pdfContent = new TextDecoder('latin1').decode(uint8Array);
+    
+    let extractedText = '';
+    
+    // Method 1: Extract from text objects (BT/ET)
+    const textObjectRegex = /BT\s*([\s\S]*?)\s*ET/g;
+    let match;
+    
+    while ((match = textObjectRegex.exec(pdfContent)) !== null) {
+      const textObject = match[1];
+      
+      // Extract from Tj operators
+      const tjRegex = /\(((?:[^()\\]|\\.|\\[0-7]{1,3})*)\)\s*Tj/g;
+      let tjMatch;
+      
+      while ((tjMatch = tjRegex.exec(textObject)) !== null) {
+        const textContent = decodePDFString(tjMatch[1]);
+        if (textContent && textContent.trim().length > 0) {
+          extractedText += textContent + ' ';
+        }
+      }
+      
+      // Extract from TJ arrays
+      const tjArrayRegex = /\[((?:[^\[\]\\]|\\.|\\[0-7]{1,3})*)\]\s*TJ/g;
+      let tjArrayMatch;
+      
+      while ((tjArrayMatch = tjArrayRegex.exec(textObject)) !== null) {
+        const arrayContent = tjArrayMatch[1];
+        const stringRegex = /\(((?:[^()\\]|\\.|\\[0-7]{1,3})*)\)/g;
+        let stringMatch;
+        
+        while ((stringMatch = stringRegex.exec(arrayContent)) !== null) {
+          const textContent = decodePDFString(stringMatch[1]);
+          if (textContent && textContent.trim().length > 0) {
+            extractedText += textContent + ' ';
+          }
+        }
+      }
+    }
+    
+    console.log(`🔧 Manual extraction result: ${extractedText.length} characters`);
+    
+    if (extractedText.length < 50) {
+      throw new Error(`Manual PDF extraction failed - insufficient text found (${extractedText.length} characters)`);
+    }
+    
+    return cleanExtractedText(extractedText);
+    
+  } catch (error) {
+    console.error(`❌ Manual PDF extraction failed:`, error);
+    throw new Error(`Both PDF.js and manual extraction failed for "${fileName}". This may be a complex or scanned PDF.`);
+  }
+}
+
+function decodePDFString(pdfString: string): string {
+  if (!pdfString) return '';
+  
+  let decoded = pdfString;
+
+  try {
+    // Handle octal escape sequences
+    decoded = decoded.replace(/\\([0-7]{1,3})/g, (match, octal) => {
+      const charCode = parseInt(octal, 8);
+      return charCode > 0 && charCode < 256 ? String.fromCharCode(charCode) : '';
+    });
+
+    // Handle hex escape sequences
+    decoded = decoded.replace(/\\x([0-9a-fA-F]{2})/g, (match, hex) => {
+      const charCode = parseInt(hex, 16);
+      return charCode > 0 && charCode < 256 ? String.fromCharCode(charCode) : '';
+    });
+
+    // Handle Unicode escape sequences
+    decoded = decoded.replace(/\\u([0-9a-fA-F]{4})/g, (match, unicode) => {
+      const charCode = parseInt(unicode, 16);
+      return String.fromCharCode(charCode);
+    });
+
+    // Handle common escape sequences
+    decoded = decoded.replace(/\\n/g, '\n');
+    decoded = decoded.replace(/\\r/g, '\r');
+    decoded = decoded.replace(/\\t/g, '\t');
+    decoded = decoded.replace(/\\\\/g, '\\');
+    decoded = decoded.replace(/\\'/g, "'");
+    decoded = decoded.replace(/\\"/g, '"');
+    decoded = decoded.replace(/\\\(/g, '(');
+    decoded = decoded.replace(/\\\)/g, ')');
+
+  } catch (error) {
+    console.warn('PDF string decoding error:', error);
+    return pdfString; // Return original if decoding fails
+  }
+
+  return decoded;
 }
 
 async function extractTextFromTXT(arrayBuffer: ArrayBuffer, fileName: string): Promise<string> {
