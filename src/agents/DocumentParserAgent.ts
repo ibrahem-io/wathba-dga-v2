@@ -2,6 +2,7 @@ import { BaseAgent } from './BaseAgent';
 import { DocumentMetadata } from './types';
 import { fileToBase64 } from '../utils/fileUtils';
 import { extractTextFromImageWithVision } from '../services/openaiService';
+import * as pdfjsLib from 'pdfjs-dist';
 
 interface DocumentParserInput {
   file: File;
@@ -10,44 +11,51 @@ interface DocumentParserInput {
 export class DocumentParserAgent extends BaseAgent {
   protected async onInitialize(): Promise<void> {
     console.log(`Document Parser Agent ${this.config.id} initialized`);
+    
+    // Set up PDF.js worker
+    pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.js';
   }
 
   protected async onExecute(input: DocumentParserInput): Promise<DocumentMetadata> {
     const { file } = input;
 
     try {
-      console.log(`🔍 Starting Vision API processing for: ${file.name} (${file.type}, ${this.formatFileSize(file.size)})`);
+      console.log(`🔍 Starting document processing for: ${file.name} (${file.type}, ${this.formatFileSize(file.size)})`);
 
-      // ALWAYS use Vision API first for ALL file types
+      // Determine file type and use appropriate extraction method
+      const fileType = this.getFileType(file);
+      
       let extractedText = '';
       let base64Image: string | undefined;
-      let confidence = 90; // High confidence for Vision API
+      let confidence = 90;
       let language: 'ar' | 'en' = 'ar'; // Default to Arabic for Saudi context
+      let isVisualDocument = false;
 
-      try {
-        console.log(`📷 Converting file to base64: ${file.name}`);
+      if (fileType === 'pdf') {
+        console.log(`📄 Processing PDF file: ${file.name}`);
+        extractedText = await this.extractTextFromPDF(file);
+        confidence = this.calculatePDFExtractionConfidence(extractedText, file);
+        isVisualDocument = false;
+      } else if (fileType === 'image') {
+        console.log(`📷 Processing image file: ${file.name}`);
         base64Image = await fileToBase64(file);
-        console.log(`✅ File converted to base64: ${base64Image.length} characters`);
-        
-        console.log(`🤖 Using Vision API to extract text from: ${file.name}`);
         extractedText = await extractTextFromImageWithVision(base64Image, language);
+        confidence = this.calculateExtractionConfidence(extractedText, file, language);
+        isVisualDocument = true;
+      } else {
+        throw new Error(`Unsupported file type: ${file.type}. Please upload PDF files or image files (PNG, JPEG, GIF, WebP).`);
+      }
+
+      if (extractedText && extractedText.trim().length > 0) {
+        console.log(`✅ Text extraction successful: ${extractedText.length} characters`);
         
-        if (extractedText && extractedText.trim().length > 0) {
-          console.log(`✅ Vision API extraction successful: ${extractedText.length} characters`);
-          
-          // Detect language from extracted text
-          language = this.detectLanguage(extractedText);
-          confidence = this.calculateExtractionConfidence(extractedText, file, language);
-          
-          console.log(`🌐 Language detected: ${language}`);
-          console.log(`📊 Extraction confidence: ${confidence}%`);
-        } else {
-          throw new Error('No text extracted from Vision API');
-        }
+        // Detect language from extracted text
+        language = this.detectLanguage(extractedText);
         
-      } catch (visionError) {
-        console.error(`❌ Vision API failed for ${file.name}:`, visionError);
-        throw new Error(`Vision API processing failed for "${file.name}": ${visionError instanceof Error ? visionError.message : 'Unknown error'}`);
+        console.log(`🌐 Language detected: ${language}`);
+        console.log(`📊 Extraction confidence: ${confidence}%`);
+      } else {
+        throw new Error(`No text could be extracted from "${file.name}". The file may be empty, corrupted, or contain only images without text.`);
       }
 
       // Calculate word count
@@ -62,10 +70,10 @@ export class DocumentParserAgent extends BaseAgent {
         wordCount,
         confidence,
         base64Image,
-        isVisualDocument: true // All files are processed as visual documents now
+        isVisualDocument
       };
 
-      console.log(`✅ Document processed successfully with Vision API: ${file.name}
+      console.log(`✅ Document processed successfully: ${file.name}
         - Type: ${file.type}
         - Language: ${language}
         - Words: ${wordCount}
@@ -78,20 +86,121 @@ export class DocumentParserAgent extends BaseAgent {
       console.error(`❌ Document processing failed for ${file.name}:`, error);
       
       // Provide specific error messages
-      let errorMessage = 'Failed to process document with Vision API';
+      let errorMessage = 'Failed to process document';
       
       if (error instanceof Error) {
         if (error.message.includes('unsupported image') || error.message.includes('invalid_image_format')) {
           errorMessage = `File format not supported by Vision API. Please convert "${file.name}" to PNG, JPEG, GIF, or WebP format and try again.`;
-        } else if (error.message.includes('Vision API')) {
-          errorMessage = `Vision API processing failed: ${error.message}`;
-        } else {
+        } else if (error.message.includes('Unsupported file type')) {
           errorMessage = error.message;
+        } else if (error.message.includes('No text could be extracted')) {
+          errorMessage = error.message;
+        } else {
+          errorMessage = `Processing failed for "${file.name}": ${error.message}`;
         }
       }
       
       throw new Error(errorMessage);
     }
+  }
+
+  private getFileType(file: File): 'pdf' | 'image' | 'unsupported' {
+    const mimeType = file.type.toLowerCase();
+    const fileName = file.name.toLowerCase();
+
+    // Check for PDF
+    if (mimeType === 'application/pdf' || fileName.endsWith('.pdf')) {
+      return 'pdf';
+    }
+
+    // Check for supported image formats
+    const supportedImageTypes = [
+      'image/png',
+      'image/jpeg',
+      'image/jpg',
+      'image/gif',
+      'image/webp'
+    ];
+
+    if (supportedImageTypes.includes(mimeType) || 
+        fileName.match(/\.(png|jpe?g|gif|webp)$/)) {
+      return 'image';
+    }
+
+    return 'unsupported';
+  }
+
+  private async extractTextFromPDF(file: File): Promise<string> {
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      
+      let fullText = '';
+      const numPages = pdf.numPages;
+      
+      console.log(`📄 PDF has ${numPages} pages`);
+
+      for (let pageNum = 1; pageNum <= numPages; pageNum++) {
+        try {
+          const page = await pdf.getPage(pageNum);
+          const textContent = await page.getTextContent();
+          
+          const pageText = textContent.items
+            .map((item: any) => item.str)
+            .join(' ');
+          
+          if (pageText.trim()) {
+            fullText += pageText + '\n\n';
+            console.log(`📄 Extracted text from page ${pageNum}: ${pageText.length} characters`);
+          }
+        } catch (pageError) {
+          console.warn(`⚠️ Failed to extract text from page ${pageNum}:`, pageError);
+          // Continue with other pages
+        }
+      }
+
+      if (!fullText.trim()) {
+        throw new Error('PDF appears to contain no extractable text. It may be a scanned document or contain only images.');
+      }
+
+      return fullText.trim();
+    } catch (error) {
+      console.error('❌ PDF text extraction failed:', error);
+      
+      if (error instanceof Error) {
+        if (error.message.includes('Invalid PDF')) {
+          throw new Error('The uploaded file is not a valid PDF document.');
+        } else if (error.message.includes('no extractable text')) {
+          throw error; // Re-throw our custom message
+        } else {
+          throw new Error(`Failed to extract text from PDF: ${error.message}`);
+        }
+      }
+      
+      throw new Error('Failed to extract text from PDF due to an unknown error.');
+    }
+  }
+
+  private calculatePDFExtractionConfidence(text: string, file: File): number {
+    let confidence = 95; // High confidence for PDF text extraction
+
+    // Text length bonuses
+    if (text.length > 500) confidence += 2;
+    if (text.length > 2000) confidence += 2;
+    if (text.length > 5000) confidence += 1;
+
+    // Penalize very short content
+    if (text.length < 100) {
+      confidence -= 15;
+    } else if (text.length < 300) {
+      confidence -= 10;
+    }
+
+    // Text structure bonuses
+    const structureBonus = this.assessTextStructure(text);
+    confidence += structureBonus;
+
+    return Math.min(98, Math.max(75, confidence));
   }
 
   private detectLanguage(text: string): 'ar' | 'en' {
