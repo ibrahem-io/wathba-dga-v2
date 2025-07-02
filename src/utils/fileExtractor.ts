@@ -16,6 +16,49 @@ export async function extractTextFromFile(file: File): Promise<string> {
   }
 }
 
+export function detectLanguage(text: string): 'ar' | 'en' {
+  // Arabic Unicode ranges: \u0600-\u06FF (Arabic), \u0750-\u077F (Arabic Supplement)
+  const arabicRegex = /[\u0600-\u06FF\u0750-\u077F]/g;
+  const englishRegex = /[a-zA-Z]/g;
+  
+  const arabicMatches = text.match(arabicRegex) || [];
+  const englishMatches = text.match(englishRegex) || [];
+  
+  // Return the language with more characters
+  return arabicMatches.length > englishMatches.length ? 'ar' : 'en';
+}
+
+export async function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    
+    reader.onload = () => {
+      const result = reader.result as string;
+      // Remove the data URL prefix (e.g., "data:image/png;base64,")
+      const base64 = result.split(',')[1];
+      resolve(base64);
+    };
+    
+    reader.onerror = () => reject(new Error('Failed to convert file to base64'));
+    reader.readAsDataURL(file);
+  });
+}
+
+export function isVisualDocument(file: File): boolean {
+  const imageTypes = [
+    'image/jpeg',
+    'image/jpg', 
+    'image/png',
+    'image/gif',
+    'image/bmp',
+    'image/webp',
+    'image/svg+xml',
+    'image/tiff'
+  ];
+  
+  return imageTypes.includes(file.type.toLowerCase());
+}
+
 async function extractTextFromPDFRobust(file: File): Promise<string> {
   console.log(`🔍 Starting robust PDF extraction for: ${file.name}`);
   
@@ -165,9 +208,9 @@ async function extractTextFromDOCXRobust(file: File): Promise<string> {
       const extractedText = xmlMatches
         .map(match => match.replace(/<w:t[^>]*>|<\/w:t>/g, ''))
         .join(' ')
-        .replace(/&lt;/g, '<')
-        .replace(/&gt;/g, '>')
-        .replace(/&amp;/g, '&')
+        .replace(/</g, '<')
+        .replace(/>/g, '>')
+        .replace(/&/g, '&')
         .replace(/\s+/g, ' ')
         .trim();
       
