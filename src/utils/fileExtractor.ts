@@ -1,7 +1,7 @@
 import * as pdfjsLib from 'pdfjs-dist';
 
-// Set the worker source for PDF.js
-pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js`;
+// Set the worker source for PDF.js - Updated to match the installed version
+pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.js`;
 
 export async function extractTextFromFile(file: File): Promise<string> {
   console.log(`🔍 Starting extraction for: ${file.name}`);
@@ -153,10 +153,10 @@ async function extractTextFromDOCX(arrayBuffer: ArrayBuffer): Promise<string> {
           // Remove XML tags and decode HTML entities
           return match
             .replace(/<w:t[^>]*>|<\/w:t>/g, '')
-            .replace(/&lt;/g, '<')
-            .replace(/&gt;/g, '>')
-            .replace(/&amp;/g, '&')
-            .replace(/&quot;/g, '"')
+            .replace(/</g, '<')
+            .replace(/>/g, '>')
+            .replace(/&/g, '&')
+            .replace(/"/g, '"')
             .replace(/&apos;/g, "'");
         })
         .join(' ')
