@@ -1,8 +1,7 @@
 import React, { useState, useCallback } from 'react';
-import { Upload, File, X, AlertCircle, CheckCircle, XCircle, Brain, Loader, Eye, Image } from 'lucide-react';
-import { analyzeDocumentForCriteria, extractTextFromImageWithVision } from '../services/openaiService';
-import { extractTextFromFile, isVisualDocument } from '../utils/fileExtractor';
-import { fileToBase64 } from '../utils/fileUtils';
+import { Upload, File, X, AlertCircle, CheckCircle, XCircle, Brain, Loader, Eye } from 'lucide-react';
+import { analyzeDocumentForCriteria } from '../services/openaiService';
+import { langchainService } from '../services/langchainService';
 
 interface CriteriaAnalysis {
   score: number;
@@ -37,8 +36,7 @@ export default function CriteriaUploadBox({
   const [analysis, setAnalysis] = useState<CriteriaAnalysis | null>(null);
   const [error, setError] = useState<string>('');
   const [dragActive, setDragActive] = useState(false);
-  const [ocrProgress, setOcrProgress] = useState<string>('');
-  const [processingType, setProcessingType] = useState<'text' | 'vision' | null>(null);
+  const [visionProgress, setVisionProgress] = useState<string>('');
 
   const handleDrag = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -70,17 +68,16 @@ export default function CriteriaUploadBox({
     }
   };
 
-  const handleFiles = (files: File[]) => {
+  const handleFiles = async (files: File[]) => {
     const maxSize = 10 * 1024 * 1024; // 10MB
-    const allowedTypes = [
-      'application/pdf', 
+    const supportedTypes = [
+      'application/pdf',
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
       'text/plain',
       'image/jpeg',
       'image/jpg',
       'image/png',
       'image/gif',
-      'image/bmp',
       'image/webp'
     ];
 
@@ -89,8 +86,10 @@ export default function CriteriaUploadBox({
         setError(language === 'ar' ? 'حجم الملف يجب أن يكون أقل من 10 ميجابايت' : 'File size must be less than 10MB');
         return false;
       }
-      if (!allowedTypes.includes(file.type)) {
-        setError(language === 'ar' ? 'يرجى رفع ملفات PDF أو DOCX أو TXT أو صور فقط' : 'Please upload PDF, DOCX, TXT, or image files only');
+      if (!supportedTypes.includes(file.type)) {
+        setError(language === 'ar' 
+          ? 'يرجى رفع ملفات PDF أو DOCX أو TXT أو صور (PNG, JPEG, GIF, WebP) فقط'
+          : 'Please upload PDF, DOCX, TXT, or image files (PNG, JPEG, GIF, WebP) only');
         return false;
       }
       return true;
@@ -107,116 +106,65 @@ export default function CriteriaUploadBox({
 
     setIsAnalyzing(true);
     setError('');
-    setOcrProgress('');
-    setProcessingType(null);
+    setVisionProgress('');
 
     try {
       // Show initial progress
-      setOcrProgress(language === 'ar' ? 'بدء معالجة الملفات...' : 'Starting file processing...');
+      setVisionProgress(language === 'ar' ? 'بدء معالجة الملفات بالذكاء الاصطناعي...' : 'Starting AI file processing...');
 
-      // Process files and extract text - VISION API FIRST approach
+      // Process files using Vision API first, then completion API
       const extractedTexts = await Promise.all(
         files.map(async (file, index) => {
           try {
             // Update progress for each file
-            setOcrProgress(language === 'ar' 
-              ? `معالجة الملف ${index + 1} من ${files.length}: ${file.name}` 
-              : `Processing file ${index + 1} of ${files.length}: ${file.name}`);
+            setVisionProgress(language === 'ar' 
+              ? `معالجة الملف ${index + 1} من ${files.length} بالذكاء الاصطناعي: ${file.name}` 
+              : `AI processing file ${index + 1} of ${files.length}: ${file.name}`);
 
-            // STEP 1: Check if file is an image - use Vision API directly
-            if (isVisualDocument(file)) {
-              setProcessingType('vision');
-              setOcrProgress(language === 'ar' 
-                ? `قراءة النص من الصورة باستخدام الذكاء الاصطناعي: ${file.name}` 
-                : `Reading text from image using AI Vision: ${file.name}`);
-              
-              // Convert image to base64 and use Vision API
-              const base64Image = await fileToBase64(file);
-              const extractedText = await extractTextFromImageWithVision(base64Image, language);
-              
+            console.log(`🤖 Processing file with Vision API: ${file.name}`);
+
+            // Use the agent system which now uses Vision API for everything
+            const result = await langchainService.analyzeCriteria(file, 'document_extraction', language);
+            
+            if (result && result.documentContent) {
               return {
                 filename: file.name,
-                text: extractedText,
+                text: result.documentContent,
                 isFromVision: true
               };
-            }
-
-            // STEP 2: For non-image files, always try traditional extraction first
-            setProcessingType('text');
-            setOcrProgress(language === 'ar' 
-              ? `استخراج النص من الملف: ${file.name}` 
-              : `Extracting text from file: ${file.name}`);
-            
-            const extractedText = await extractTextFromFile(file);
-            
-            // Check if we got meaningful text
-            const meaningfulText = extractedText.replace(/\s+/g, ' ').trim();
-            const hasGoodContent = meaningfulText.length > 100 && 
-              /[a-zA-Z\u0600-\u06FF]{20,}/.test(meaningfulText);
-            
-            if (hasGoodContent) {
-              console.log('✅ Traditional text extraction successful');
-              return {
-                filename: file.name,
-                text: extractedText,
-                isFromVision: false
-              };
             } else {
-              // If traditional extraction yields poor results, inform user
-              console.log('⚠️ Traditional extraction yielded poor results');
-              
-              if (file.type === 'application/pdf') {
-                // For PDFs with poor text extraction, suggest they convert to image
-                throw new Error(language === 'ar' 
-                  ? `ملف PDF "${file.name}" لا يحتوي على نص قابل للقراءة أو قد يكون ممسوحاً ضوئياً. يرجى تحويل الملف إلى صورة (PNG أو JPG) لاستخدام تقنية قراءة النص من الصور.`
-                  : `PDF "${file.name}" contains no readable text or may be scanned. Please convert the file to an image (PNG or JPG) to use AI Vision text reading.`);
-              } else {
-                throw new Error(language === 'ar' 
-                  ? `فشل في استخراج نص كافٍ من الملف "${file.name}"`
-                  : `Failed to extract sufficient text from file "${file.name}"`);
-              }
+              throw new Error('No text extracted from Vision API');
             }
 
           } catch (fileError) {
             console.error(`Error processing file ${file.name}:`, fileError);
             
-            // Return error placeholder
-            return {
-              filename: file.name,
-              text: `[خطأ في معالجة الملف: ${file.name} - ${fileError instanceof Error ? fileError.message : 'خطأ غير معروف'}]`,
-              isFromVision: false
-            };
+            if (fileError instanceof Error && fileError.message.includes('unsupported image')) {
+              throw new Error(language === 'ar' 
+                ? `تنسيق الملف "${file.name}" غير مدعوم من قبل الذكاء الاصطناعي. يرجى تحويل الملف إلى PNG أو JPEG أو GIF أو WebP والمحاولة مرة أخرى.`
+                : `File format "${file.name}" not supported by AI Vision. Please convert to PNG, JPEG, GIF, or WebP and try again.`);
+            }
+            
+            throw fileError;
           }
         })
       );
 
       // Filter out error messages and combine valid text
       const validTexts = extractedTexts.filter(result => 
-        result.text && !result.text.startsWith('[خطأ') && !result.text.startsWith('[Error') && result.text.length > 10
+        result.text && result.text.length > 10
       );
 
-      // Check if any files were processed with Vision API
-      const hasVisionResults = extractedTexts.some(result => result.isFromVision);
-
+      if (validTexts.length === 0) {
+        throw new Error(language === 'ar' 
+          ? 'فشل في استخراج النص من جميع الملفات باستخدام الذكاء الاصطناعي'
+          : 'Failed to extract text from all files using AI Vision');
+      }
+      
       // Combine all text content with file source information
       let combinedText = validTexts.map(result => 
-        `=== ${result.filename} ${result.isFromVision ? '(مستخرج بالذكاء الاصطناعي من صورة)' : ''} ===\n${result.text}`
+        `=== ${result.filename} (مستخرج بالذكاء الاصطناعي) ===\n${result.text}`
       ).join('\n\n--- الملف التالي ---\n\n');
-      
-      // Check if we have any errors to show
-      const errorTexts = extractedTexts.filter(result => 
-        result.text && (result.text.startsWith('[خطأ') || result.text.startsWith('[Error'))
-      );
-
-      if (errorTexts.length > 0) {
-        // Show warning about files that couldn't be processed
-        setOcrProgress(language === 'ar' 
-          ? `تحذير: ${errorTexts.length} ملف لم يتم معالجته بنجاح - سيتم التحليل بالملفات المتاحة`
-          : `Warning: ${errorTexts.length} file(s) could not be processed - analysis will continue with available files`);
-        
-        // Wait a moment to show the warning
-        await new Promise(resolve => setTimeout(resolve, 2000));
-      }
       
       // Limit combined text to prevent token overflow
       const maxCombinedLength = 80000;
@@ -224,36 +172,22 @@ export default function CriteriaUploadBox({
         combinedText = combinedText.substring(0, maxCombinedLength) + '\n\n[Text truncated due to length...]';
       }
 
-      if (!combinedText || combinedText.trim().length < 50) {
-        if (errorTexts.length === files.length) {
-          // All files failed to process
-          throw new Error(language === 'ar' 
-            ? 'فشل في معالجة جميع الملفات. يرجى التحقق من صحة الملفات أو تجربة ملفات بصيغة أخرى.'
-            : 'Failed to process all files. Please check file integrity or try different file formats.');
-        } else {
-          throw new Error(language === 'ar' 
-            ? 'لم يتم العثور على نص كافٍ في الملفات للتحليل'
-            : 'Insufficient text found in files for analysis');
-        }
-      }
-
-      // STEP 3: Now send the extracted text to completion API
-      setOcrProgress(language === 'ar' 
+      // Now send the extracted text to completion API
+      setVisionProgress(language === 'ar' 
         ? 'تحليل المحتوى المستخرج باستخدام الذكاء الاصطناعي...' 
         : 'Analyzing extracted content with AI...');
 
-      console.log('📤 Sending extracted text to completion API...');
+      console.log('📤 Sending Vision API extracted text to completion API...');
       console.log(`📊 Text length: ${combinedText.length} characters`);
-      console.log(`🔍 Has Vision results: ${hasVisionResults}`);
 
       // Analyze against specific criteria using completion API
-      const result = await analyzeDocumentForCriteria(combinedText, criteriaId, language, hasVisionResults);
+      const result = await analyzeDocumentForCriteria(combinedText, criteriaId, language, true);
       
       setAnalysis(result);
       onAnalysisComplete(criteriaId, result);
 
       // Clear progress after successful completion
-      setOcrProgress('');
+      setVisionProgress('');
 
     } catch (error) {
       console.error('Analysis error:', error);
@@ -261,16 +195,16 @@ export default function CriteriaUploadBox({
       // Provide user-friendly error messages
       let errorMessage = '';
       if (error instanceof Error) {
-        if (error.message.includes('Vision API') || error.message.includes('الذكاء الاصطناعي')) {
+        if (error.message.includes('unsupported image') || error.message.includes('invalid_image_format')) {
           errorMessage = language === 'ar' 
-            ? 'فشل في قراءة النص من الصورة باستخدام الذكاء الاصطناعي. يرجى التأكد من وضوح النص في الصورة والمحاولة مرة أخرى.'
-            : 'Failed to read text from image using AI Vision. Please ensure the text in the image is clear and try again.';
+            ? 'تنسيق الملف غير مدعوم من قبل الذكاء الاصطناعي. يرجى استخدام ملفات PNG أو JPEG أو GIF أو WebP فقط.'
+            : 'File format not supported by AI Vision. Please use PNG, JPEG, GIF, or WebP files only.';
+        } else if (error.message.includes('Vision API') || error.message.includes('الذكاء الاصطناعي')) {
+          errorMessage = error.message;
         } else if (error.message.includes('API') || error.message.includes('network')) {
           errorMessage = language === 'ar' 
             ? 'خطأ في الاتصال بخدمة الذكاء الاصطناعي. يرجى التحقق من الاتصال بالإنترنت والمحاولة مرة أخرى.'
             : 'Error connecting to AI service. Please check your internet connection and try again.';
-        } else if (error.message.includes('ممسوحاً ضوئياً') || error.message.includes('scanned')) {
-          errorMessage = error.message;
         } else {
           errorMessage = error.message;
         }
@@ -281,10 +215,9 @@ export default function CriteriaUploadBox({
       }
       
       setError(errorMessage);
-      setOcrProgress('');
+      setVisionProgress('');
     } finally {
       setIsAnalyzing(false);
-      setProcessingType(null);
     }
   };
 
@@ -295,7 +228,7 @@ export default function CriteriaUploadBox({
     if (newFiles.length === 0) {
       setAnalysis(null);
       setError('');
-      setOcrProgress('');
+      setVisionProgress('');
     } else {
       analyzeFiles(newFiles);
     }
@@ -376,7 +309,7 @@ export default function CriteriaUploadBox({
           onDragOver={handleDrag}
           onDrop={handleDrop}
         >
-          <Upload className="w-8 h-8 text-gray-400 mx-auto mb-2" />
+          <Eye className="w-8 h-8 text-purple-400 mx-auto mb-2" />
           <p className="text-sm font-medium text-gray-700 mb-1">
             {language === 'ar' 
               ? 'اسحب وأفلت الملفات هنا أو انقر للتحديد'
@@ -384,25 +317,25 @@ export default function CriteriaUploadBox({
           </p>
           <p className="text-xs text-gray-500 mb-2">
             {language === 'ar' 
-              ? 'ملفات PDF أو DOCX أو TXT أو صور (حد أقصى 10 ميجابايت لكل ملف)'
-              : 'PDF, DOCX, TXT, or image files (Max 10MB each)'}
+              ? 'جميع الملفات (PDF، DOCX، TXT، صور) - حد أقصى 10 ميجابايت لكل ملف'
+              : 'All file types (PDF, DOCX, TXT, images) - Max 10MB each'}
           </p>
-          <div className={`flex items-center justify-center space-x-2 mb-3 text-xs text-blue-600 ${language === 'ar' ? 'space-x-reverse' : ''}`}>
-            <Eye className="w-4 h-4" />
+          <div className={`flex items-center justify-center space-x-2 mb-3 text-xs text-purple-600 ${language === 'ar' ? 'space-x-reverse' : ''}`}>
+            <Brain className="w-4 h-4" />
             <span>
               {language === 'ar' 
-                ? 'يدعم قراءة النص من الصور باستخدام الذكاء الاصطناعي'
-                : 'Supports reading text from images using AI Vision'}
+                ? 'جميع الملفات تتم معالجتها بالذكاء الاصطناعي المتقدم'
+                : 'All files processed with advanced AI Vision'}
             </span>
           </div>
-          <div className={`text-xs text-orange-600 mb-3 ${language === 'ar' ? 'text-right' : 'text-left'}`}>
+          <div className={`text-xs text-blue-600 mb-3 ${language === 'ar' ? 'text-right' : 'text-left'}`}>
             {language === 'ar' 
-              ? '💡 نصيحة: للمستندات الممسوحة ضوئياً، قم بتحويلها إلى صور (PNG/JPG) للحصول على أفضل النتائج'
-              : '💡 Tip: For scanned documents, convert them to images (PNG/JPG) for best results'}
-          </div>
+              ? '🤖 تقنية الذكاء الاصطناعي تقرأ النص من جميع أنواع الملفات'
+              : '🤖 AI Vision technology reads text from all file types'}
+            </div>
           <input
             type="file"
-            accept=".pdf,.docx,.txt,.jpg,.jpeg,.png,.gif,.bmp,.webp"
+            accept=".pdf,.docx,.txt,.jpg,.jpeg,.png,.gif,.webp"
             onChange={handleFileInput}
             className="hidden"
             id={`file-upload-${criteriaId}`}
@@ -410,7 +343,7 @@ export default function CriteriaUploadBox({
           />
           <label
             htmlFor={`file-upload-${criteriaId}`}
-            className={`bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg cursor-pointer inline-flex items-center space-x-2 transition-colors text-sm ${language === 'ar' ? 'space-x-reverse' : ''}`}
+            className={`bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg cursor-pointer inline-flex items-center space-x-2 transition-colors text-sm ${language === 'ar' ? 'space-x-reverse' : ''}`}
           >
             <Upload className="w-4 h-4" />
             <span>{language === 'ar' ? 'اختر ملفات' : 'Choose Files'}</span>
@@ -422,22 +355,16 @@ export default function CriteriaUploadBox({
           {uploadedFiles.map((file, index) => (
             <div key={index} className="flex items-center justify-between bg-gray-50 rounded-lg p-3">
               <div className={`flex items-center space-x-3 ${language === 'ar' ? 'space-x-reverse' : ''}`}>
-                {isVisualDocument(file) ? (
-                  <Image className="w-5 h-5 text-purple-600" />
-                ) : (
-                  <File className="w-5 h-5 text-blue-600" />
-                )}
+                <Eye className="w-5 h-5 text-purple-600" />
                 <div>
                   <p className={`text-sm font-medium text-gray-800 ${language === 'ar' ? 'text-right' : 'text-left'}`}>
                     {file.name}
                   </p>
                   <p className={`text-xs text-gray-500 ${language === 'ar' ? 'text-right' : 'text-left'}`}>
                     {formatFileSize(file.size)}
-                    {isVisualDocument(file) && (
-                      <span className="ml-2 text-purple-600">
-                        {language === 'ar' ? '(صورة - سيتم قراءة النص بالذكاء الاصطناعي)' : '(Image - Text will be read with AI Vision)'}
-                      </span>
-                    )}
+                    <span className="ml-2 text-purple-600">
+                      {language === 'ar' ? '(معالجة بالذكاء الاصطناعي)' : '(AI Vision Processing)'}
+                    </span>
                   </p>
                 </div>
               </div>
@@ -455,7 +382,7 @@ export default function CriteriaUploadBox({
           <div className="text-center pt-2">
             <input
               type="file"
-              accept=".pdf,.docx,.txt,.jpg,.jpeg,.png,.gif,.bmp,.webp"
+              accept=".pdf,.docx,.txt,.jpg,.jpeg,.png,.gif,.webp"
               onChange={handleFileInput}
               className="hidden"
               id={`file-upload-more-${criteriaId}`}
@@ -463,7 +390,7 @@ export default function CriteriaUploadBox({
             />
             <label
               htmlFor={`file-upload-more-${criteriaId}`}
-              className={`text-blue-600 hover:text-blue-700 cursor-pointer inline-flex items-center space-x-1 text-sm ${language === 'ar' ? 'space-x-reverse' : ''}`}
+              className={`text-purple-600 hover:text-purple-700 cursor-pointer inline-flex items-center space-x-1 text-sm ${language === 'ar' ? 'space-x-reverse' : ''}`}
             >
               <Upload className="w-4 h-4" />
               <span>{language === 'ar' ? 'إضافة ملفات أخرى' : 'Add More Files'}</span>
@@ -474,26 +401,24 @@ export default function CriteriaUploadBox({
 
       {/* Analysis Status with Vision API Progress */}
       {isAnalyzing && (
-        <div className={`mt-4 p-3 bg-blue-50 rounded-lg ${language === 'ar' ? 'text-right' : 'text-left'}`}>
+        <div className={`mt-4 p-3 bg-purple-50 rounded-lg ${language === 'ar' ? 'text-right' : 'text-left'}`}>
           <div className={`flex items-center space-x-2 mb-2 ${language === 'ar' ? 'space-x-reverse flex-row-reverse' : ''}`}>
-            <Loader className="w-5 h-5 text-blue-600 animate-spin" />
-            {processingType === 'vision' && <Eye className="w-5 h-5 text-purple-600" />}
-            <span className="text-blue-700 text-sm font-medium">
-              {language === 'ar' ? 'جاري التحليل الذكي...' : 'Smart Analysis in Progress...'}
+            <Loader className="w-5 h-5 text-purple-600 animate-spin" />
+            <Eye className="w-5 h-5 text-purple-600" />
+            <span className="text-purple-700 text-sm font-medium">
+              {language === 'ar' ? 'جاري التحليل بالذكاء الاصطناعي...' : 'AI Vision Analysis in Progress...'}
             </span>
           </div>
-          {ocrProgress && (
-            <div className="text-sm text-blue-600 bg-blue-100 rounded p-2">
-              {ocrProgress}
+          {visionProgress && (
+            <div className="text-sm text-purple-600 bg-purple-100 rounded p-2">
+              {visionProgress}
             </div>
           )}
-          {processingType === 'vision' && (
-            <div className={`mt-2 text-xs text-purple-600 ${language === 'ar' ? 'text-right' : 'text-left'}`}>
-              {language === 'ar' 
-                ? '💡 يتم استخدام تقنية الذكاء الاصطناعي المتقدمة لقراءة النص من الصور'
-                : '💡 Using advanced AI Vision technology to read text from images'}
-            </div>
-          )}
+          <div className={`mt-2 text-xs text-purple-600 ${language === 'ar' ? 'text-right' : 'text-left'}`}>
+            {language === 'ar' 
+              ? '🤖 يتم استخدام تقنية الذكاء الاصطناعي المتقدمة لقراءة وتحليل جميع الملفات'
+              : '🤖 Using advanced AI Vision technology to read and analyze all files'}
+          </div>
         </div>
       )}
 
@@ -511,26 +436,13 @@ export default function CriteriaUploadBox({
             </div>
           </div>
 
-          {/* Processing Method Indicator */}
-          {processingType && (
-            <div className={`flex items-center space-x-2 text-xs ${language === 'ar' ? 'space-x-reverse flex-row-reverse' : ''}`}>
-              {processingType === 'vision' ? (
-                <>
-                  <Eye className="w-4 h-4 text-purple-500" />
-                  <span className="text-purple-600">
-                    {language === 'ar' ? 'تم استخدام تقنية الذكاء الاصطناعي لقراءة النص من الصور' : 'AI Vision technology was used to read text from images'}
-                  </span>
-                </>
-              ) : (
-                <>
-                  <File className="w-4 h-4 text-blue-500" />
-                  <span className="text-blue-600">
-                    {language === 'ar' ? 'تم استخراج النص مباشرة' : 'Direct text extraction'}
-                  </span>
-                </>
-              )}
-            </div>
-          )}
+          {/* Vision Processing Indicator */}
+          <div className={`flex items-center space-x-2 text-xs ${language === 'ar' ? 'space-x-reverse flex-row-reverse' : ''}`}>
+            <Eye className="w-4 h-4 text-purple-500" />
+            <span className="text-purple-600">
+              {language === 'ar' ? 'تم استخدام تقنية الذكاء الاصطناعي لقراءة جميع الملفات' : 'AI Vision technology was used to read all files'}
+            </span>
+          </div>
 
           {/* Findings */}
           <div>
@@ -550,7 +462,7 @@ export default function CriteriaUploadBox({
               </h4>
               <div className="space-y-1">
                 {analysis.evidence.slice(0, 2).map((evidence, index) => (
-                  <div key={index} className={`bg-white border-l-4 border-blue-400 p-2 rounded text-xs text-gray-600 italic ${language === 'ar' ? 'border-l-0 border-r-4 text-right' : 'text-left'}`}>
+                  <div key={index} className={`bg-white border-l-4 border-purple-400 p-2 rounded text-xs text-gray-600 italic ${language === 'ar' ? 'border-l-0 border-r-4 text-right' : 'text-left'}`}>
                     "{evidence}"
                   </div>
                 ))}
@@ -585,103 +497,27 @@ export default function CriteriaUploadBox({
             {error}
           </p>
           
-          {/* Helpful suggestions based on error type */}
-          {(error.includes('ممسوحاً ضوئياً') || error.includes('scanned') || error.includes('تحويل الملف إلى صورة')) && (
+          {/* Helpful suggestions for unsupported formats */}
+          {(error.includes('unsupported') || error.includes('غير مدعوم')) && (
             <div className="bg-blue-50 border border-blue-200 rounded p-3 mt-3">
               <h4 className={`text-sm font-medium text-blue-800 mb-2 ${language === 'ar' ? 'text-right' : 'text-left'}`}>
-                {language === 'ar' ? 'حل مقترح للمستندات الممسوحة ضوئياً:' : 'Suggested solution for scanned documents:'}
-              </h4>
-              <ul className={`text-sm text-blue-700 space-y-1 ${language === 'ar' ? 'text-right' : 'text-left'}`}>
-                <li className={`flex items-start ${language === 'ar' ? 'flex-row-reverse' : ''}`}>
-                  <span className={`${language === 'ar' ? 'ml-2' : 'mr-2'} text-blue-600`}>1.</span>
-                  <span>
-                    {language === 'ar' 
-                      ? 'قم بتحويل PDF إلى صورة (PNG أو JPG) باستخدام أي برنامج تحويل'
-                      : 'Convert PDF to image (PNG or JPG) using any conversion tool'}
-                  </span>
-                </li>
-                <li className={`flex items-start ${language === 'ar' ? 'flex-row-reverse' : ''}`}>
-                  <span className={`${language === 'ar' ? 'ml-2' : 'mr-2'} text-blue-600`}>2.</span>
-                  <span>
-                    {language === 'ar' 
-                      ? 'ارفع الصورة هنا وسيتم قراءة النص تلقائياً بالذكاء الاصطناعي'
-                      : 'Upload the image here and text will be automatically read with AI'}
-                  </span>
-                </li>
-                <li className={`flex items-start ${language === 'ar' ? 'flex-row-reverse' : ''}`}>
-                  <span className={`${language === 'ar' ? 'ml-2' : 'mr-2'} text-blue-600`}>3.</span>
-                  <span>
-                    {language === 'ar' 
-                      ? 'تأكد من وضوح النص في الصورة للحصول على أفضل النتائج'
-                      : 'Ensure text clarity in the image for best results'}
-                  </span>
-                </li>
-              </ul>
-            </div>
-          )}
-          
-          {(error.includes('Vision') || error.includes('الذكاء الاصطناعي')) && (
-            <div className="bg-purple-50 border border-purple-200 rounded p-3 mt-3">
-              <h4 className={`text-sm font-medium text-purple-800 mb-2 ${language === 'ar' ? 'text-right' : 'text-left'}`}>
-                {language === 'ar' ? 'نصائح لتحسين قراءة النص من الصور:' : 'Tips for better image text reading:'}
-              </h4>
-              <ul className={`text-sm text-purple-700 space-y-1 ${language === 'ar' ? 'text-right' : 'text-left'}`}>
-                <li className={`flex items-start ${language === 'ar' ? 'flex-row-reverse' : ''}`}>
-                  <span className={`${language === 'ar' ? 'ml-2' : 'mr-2'} text-purple-600`}>•</span>
-                  <span>
-                    {language === 'ar' 
-                      ? 'تأكد من وضوح النص في الصورة'
-                      : 'Ensure the text in the image is clear'}
-                  </span>
-                </li>
-                <li className={`flex items-start ${language === 'ar' ? 'flex-row-reverse' : ''}`}>
-                  <span className={`${language === 'ar' ? 'ml-2' : 'mr-2'} text-purple-600`}>•</span>
-                  <span>
-                    {language === 'ar' 
-                      ? 'استخدم صور عالية الجودة (PNG أو JPG)'
-                      : 'Use high-quality images (PNG or JPG)'}
-                  </span>
-                </li>
-                <li className={`flex items-start ${language === 'ar' ? 'flex-row-reverse' : ''}`}>
-                  <span className={`${language === 'ar' ? 'ml-2' : 'mr-2'} text-purple-600`}>•</span>
-                  <span>
-                    {language === 'ar' 
-                      ? 'تجنب الصور المائلة أو المشوهة'
-                      : 'Avoid tilted or distorted images'}
-                  </span>
-                </li>
-              </ul>
-            </div>
-          )}
-          
-          {(error.includes('API') || error.includes('network') || error.includes('الاتصال')) && (
-            <div className="bg-blue-50 border border-blue-200 rounded p-3 mt-3">
-              <h4 className={`text-sm font-medium text-blue-800 mb-2 ${language === 'ar' ? 'text-right' : 'text-left'}`}>
-                {language === 'ar' ? 'مشكلة في الاتصال:' : 'Connection Issue:'}
+                {language === 'ar' ? 'الحل المقترح:' : 'Suggested Solution:'}
               </h4>
               <ul className={`text-sm text-blue-700 space-y-1 ${language === 'ar' ? 'text-right' : 'text-left'}`}>
                 <li className={`flex items-start ${language === 'ar' ? 'flex-row-reverse' : ''}`}>
                   <span className={`${language === 'ar' ? 'ml-2' : 'mr-2'} text-blue-600`}>•</span>
                   <span>
                     {language === 'ar' 
-                      ? 'تحقق من اتصالك بالإنترنت'
-                      : 'Check your internet connection'}
+                      ? 'استخدم ملفات PNG أو JPEG أو GIF أو WebP فقط'
+                      : 'Use PNG, JPEG, GIF, or WebP files only'}
                   </span>
                 </li>
                 <li className={`flex items-start ${language === 'ar' ? 'flex-row-reverse' : ''}`}>
                   <span className={`${language === 'ar' ? 'ml-2' : 'mr-2'} text-blue-600`}>•</span>
                   <span>
                     {language === 'ar' 
-                      ? 'تأكد من صحة مفتاح API'
-                      : 'Verify your API key is correct'}
-                  </span>
-                </li>
-                <li className={`flex items-start ${language === 'ar' ? 'flex-row-reverse' : ''}`}>
-                  <span className={`${language === 'ar' ? 'ml-2' : 'mr-2'} text-blue-600`}>•</span>
-                  <span>
-                    {language === 'ar' 
-                      ? 'انتظر قليلاً ثم حاول مرة أخرى'
-                      : 'Wait a moment and try again'}
+                      ? 'قم بتحويل ملفات PDF أو DOCX إلى صور للحصول على أفضل النتائج'
+                      : 'Convert PDF or DOCX files to images for best results'}
                   </span>
                 </li>
               </ul>
