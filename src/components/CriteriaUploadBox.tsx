@@ -1,8 +1,7 @@
 import React, { useState, useCallback } from 'react';
-import { Upload, File, X, AlertCircle, CheckCircle, XCircle, Brain, Loader, FileText, Image } from 'lucide-react';
+import { Upload, File, X, AlertCircle, CheckCircle, XCircle, Brain, Loader, FileText } from 'lucide-react';
 import { analyzeDocumentForCriteria } from '../services/openaiService';
-import { langchainService } from '../services/langchainService';
-import { isVisualDocument } from '../utils/fileExtractor';
+import { extractTextFromFile, isVisualDocument } from '../utils/fileExtractor';
 
 interface CriteriaAnalysis {
   score: number;
@@ -118,7 +117,7 @@ export default function CriteriaUploadBox({
       // Show initial progress
       setProcessingProgress(language === 'ar' ? 'بدء معالجة الملفات...' : 'Starting file processing...');
 
-      // Process files and extract text using text-first approach
+      // Extract text from all files with better error handling
       const extractedTexts = await Promise.all(
         files.map(async (file, index) => {
           try {
@@ -129,39 +128,56 @@ export default function CriteriaUploadBox({
 
             console.log(`📄 Processing text document: ${file.name}`);
 
-            // Use the agent system for text extraction
-            const result = await langchainService.analyzeCriteria(file, 'document_extraction', language);
+            const text = await extractTextFromFile(file);
             
-            if (result && result.documentContent) {
-              return {
-                filename: file.name,
-                text: result.documentContent,
-                isFromText: true
-              };
-            } else {
-              throw new Error('No text extracted from document');
+            if (!text || text.trim().length < 20) {
+              throw new Error(
+                language === 'ar' 
+                  ? `الملف "${file.name}" لا يحتوي على نص كافٍ للتحليل`
+                  : `File "${file.name}" does not contain sufficient text for analysis`
+              );
             }
-
-          } catch (fileError) {
-            console.error(`Error processing file ${file.name}:`, fileError);
             
-            if (fileError instanceof Error) {
-              if (fileError.message.includes('Image file detected')) {
-                throw new Error(language === 'ar' 
-                  ? `الملف "${file.name}" هو صورة. يرجى رفع وثائق نصية (PDF، DOCX، TXT) فقط.`
-                  : `File "${file.name}" is an image. Please upload text documents (PDF, DOCX, TXT) only.`);
-              } else if (fileError.message.includes('scanned') || fileError.message.includes('image-based')) {
-                throw new Error(language === 'ar' 
-                  ? `الملف "${file.name}" يبدو أنه ممسوح ضوئياً أو يحتوي على صور. يرجى رفع وثيقة نصية.`
-                  : `File "${file.name}" appears to be scanned or image-based. Please upload a text-based document.`);
-              } else if (fileError.message.includes('password-protected')) {
-                throw new Error(language === 'ar' 
-                  ? `الملف "${file.name}" قد يكون محمياً بكلمة مرور. يرجى رفع ملف غير محمي.`
-                  : `File "${file.name}" may be password-protected. Please upload an unprotected file.`);
+            return {
+              filename: file.name,
+              text: text,
+              isFromText: true
+            };
+
+          } catch (extractError) {
+            console.error(`Error extracting from ${file.name}:`, extractError);
+            
+            // Provide specific error messages based on error type
+            if (extractError instanceof Error) {
+              if (extractError.message.includes('password')) {
+                throw new Error(
+                  language === 'ar' 
+                    ? `الملف "${file.name}" محمي بكلمة مرور. يرجى رفع ملف غير محمي`
+                    : `File "${file.name}" is password-protected. Please upload an unprotected file`
+                );
+              } else if (extractError.message.includes('corrupted') || extractError.message.includes('images')) {
+                throw new Error(
+                  language === 'ar' 
+                    ? `الملف "${file.name}" قد يحتوي على صور فقط أو تالف. يرجى رفع ملف يحتوي على نص قابل للتحديد`
+                    : `File "${file.name}" may contain only images or be corrupted. Please upload a file with selectable text`
+                );
+              } else if (extractError.message.includes('format')) {
+                throw new Error(
+                  language === 'ar' 
+                    ? `تنسيق الملف "${file.name}" غير صالح. يرجى رفع ملف PDF أو DOCX أو TXT صحيح`
+                    : `File "${file.name}" has invalid format. Please upload a valid PDF, DOCX, or TXT file`
+                );
+              } else if (extractError.message.includes('sufficient text')) {
+                throw extractError; // Re-throw as is
               }
             }
             
-            throw fileError;
+            // Generic error for unknown issues
+            throw new Error(
+              language === 'ar' 
+                ? `فشل في قراءة الملف "${file.name}". يرجى المحاولة بملف آخر أو تحويله إلى تنسيق نصي`
+                : `Failed to read file "${file.name}". Please try another file or convert it to text format`
+            );
           }
         })
       );
@@ -188,6 +204,12 @@ export default function CriteriaUploadBox({
         combinedText = combinedText.substring(0, maxCombinedLength) + '\n\n[Text truncated due to length...]';
       }
 
+      if (!combinedText || combinedText.trim().length < 50) {
+        throw new Error(language === 'ar' 
+          ? 'لم يتم العثور على نص كافٍ في الملفات للتحليل. يرجى التأكد من أن الملفات تحتوي على نص قابل للقراءة'
+          : 'Insufficient text found in files for analysis. Please ensure files contain readable text');
+      }
+
       // Now send the extracted text to completion API
       setProcessingProgress(language === 'ar' 
         ? 'تحليل المحتوى المستخرج باستخدام الذكاء الاصطناعي...' 
@@ -208,26 +230,32 @@ export default function CriteriaUploadBox({
     } catch (error) {
       console.error('Analysis error:', error);
       
-      // Provide user-friendly error messages
       let errorMessage = '';
+      
       if (error instanceof Error) {
-        if (error.message.includes('Image file detected') || error.message.includes('صورة')) {
+        // Use the specific error message if it's already user-friendly
+        if (error.message.includes('محمي بكلمة مرور') || error.message.includes('password-protected') ||
+            error.message.includes('صور فقط') || error.message.includes('only images') ||
+            error.message.includes('تنسيق') || error.message.includes('format') ||
+            error.message.includes('نص كافٍ') || error.message.includes('sufficient text')) {
           errorMessage = error.message;
-        } else if (error.message.includes('scanned') || error.message.includes('ممسوح ضوئياً')) {
-          errorMessage = error.message;
-        } else if (error.message.includes('password-protected') || error.message.includes('محمي بكلمة مرور')) {
-          errorMessage = error.message;
-        } else if (error.message.includes('API') || error.message.includes('network')) {
+        } else if (error.message.includes('API key')) {
           errorMessage = language === 'ar' 
-            ? 'خطأ في الاتصال بخدمة الذكاء الاصطناعي. يرجى التحقق من الاتصال بالإنترنت والمحاولة مرة أخرى.'
-            : 'Error connecting to AI service. Please check your internet connection and try again.';
+            ? 'مفتاح OpenAI API غير صحيح. يرجى التحقق من الإعدادات'
+            : 'Invalid OpenAI API key. Please check your configuration';
+        } else if (error.message.includes('network') || error.message.includes('fetch')) {
+          errorMessage = language === 'ar' 
+            ? 'خطأ في الاتصال بالإنترنت. يرجى التحقق من الاتصال والمحاولة مرة أخرى'
+            : 'Network connection error. Please check your connection and try again';
         } else {
-          errorMessage = error.message;
+          errorMessage = language === 'ar' 
+            ? 'حدث خطأ أثناء تحليل الملفات. يرجى المحاولة مرة أخرى أو استخدام ملفات أخرى'
+            : 'An error occurred while analyzing the files. Please try again or use different files';
         }
       } else {
         errorMessage = language === 'ar' 
-          ? 'حدث خطأ غير متوقع أثناء تحليل الملفات'
-          : 'An unexpected error occurred while analyzing the files';
+          ? 'حدث خطأ غير متوقع. يرجى المحاولة مرة أخرى'
+          : 'An unexpected error occurred. Please try again';
       }
       
       setError(errorMessage);
@@ -284,15 +312,6 @@ export default function CriteriaUploadBox({
       : ['Bytes', 'KB', 'MB', 'GB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-  };
-
-  const getFileIcon = (file: File) => {
-    if (isVisualDocument(file)) {
-      return <Image className="w-5 h-5 text-red-600" />;
-    } else if (file.type === 'application/pdf') {
-      return <FileText className="w-5 h-5 text-red-600" />;
-    }
-    return <File className="w-5 h-5 text-blue-600" />;
   };
 
   return (
@@ -380,18 +399,16 @@ export default function CriteriaUploadBox({
           {uploadedFiles.map((file, index) => (
             <div key={index} className="flex items-center justify-between bg-gray-50 rounded-lg p-3">
               <div className={`flex items-center space-x-3 ${language === 'ar' ? 'space-x-reverse' : ''}`}>
-                {getFileIcon(file)}
+                <File className="w-5 h-5 text-blue-600" />
                 <div>
                   <p className={`text-sm font-medium text-gray-800 ${language === 'ar' ? 'text-right' : 'text-left'}`}>
                     {file.name}
                   </p>
                   <p className={`text-xs text-gray-500 ${language === 'ar' ? 'text-right' : 'text-left'}`}>
                     {formatFileSize(file.size)}
-                    {!isVisualDocument(file) && (
-                      <span className="ml-2 text-blue-600">
-                        {language === 'ar' ? '(وثيقة نصية)' : '(Text document)'}
-                      </span>
-                    )}
+                    <span className="ml-2 text-blue-600">
+                      {language === 'ar' ? '(وثيقة نصية)' : '(Text document)'}
+                    </span>
                   </p>
                 </div>
               </div>
@@ -550,26 +567,52 @@ export default function CriteriaUploadBox({
             </div>
           )}
           
-          {(error.includes('ممسوح ضوئياً') || error.includes('scanned')) && (
+          {(error.includes('محمي بكلمة مرور') || error.includes('password-protected')) && (
             <div className="bg-yellow-50 border border-yellow-200 rounded p-3 mt-3">
               <h4 className={`text-sm font-medium text-yellow-800 mb-2 ${language === 'ar' ? 'text-right' : 'text-left'}`}>
-                {language === 'ar' ? 'للمستندات الممسوحة ضوئياً:' : 'For scanned documents:'}
+                {language === 'ar' ? 'للملفات المحمية:' : 'For protected files:'}
               </h4>
               <ul className={`text-sm text-yellow-700 space-y-1 ${language === 'ar' ? 'text-right' : 'text-left'}`}>
                 <li className={`flex items-start ${language === 'ar' ? 'flex-row-reverse' : ''}`}>
                   <span className={`${language === 'ar' ? 'ml-2' : 'mr-2'} text-yellow-600`}>•</span>
                   <span>
                     {language === 'ar' 
-                      ? 'استخدم برنامج OCR لتحويل الصورة إلى نص'
-                      : 'Use OCR software to convert the image to text'}
+                      ? 'قم بإزالة الحماية من الملف'
+                      : 'Remove password protection from the file'}
                   </span>
                 </li>
                 <li className={`flex items-start ${language === 'ar' ? 'flex-row-reverse' : ''}`}>
                   <span className={`${language === 'ar' ? 'ml-2' : 'mr-2'} text-yellow-600`}>•</span>
                   <span>
                     {language === 'ar' 
-                      ? 'احفظ النتيجة كملف PDF أو DOCX يحتوي على نص'
-                      : 'Save the result as a PDF or DOCX file containing text'}
+                      ? 'انسخ النص والصقه في ملف جديد'
+                      : 'Copy the text and paste it into a new file'}
+                  </span>
+                </li>
+              </ul>
+            </div>
+          )}
+
+          {(error.includes('صور فقط') || error.includes('only images') || error.includes('corrupted')) && (
+            <div className="bg-purple-50 border border-purple-200 rounded p-3 mt-3">
+              <h4 className={`text-sm font-medium text-purple-800 mb-2 ${language === 'ar' ? 'text-right' : 'text-left'}`}>
+                {language === 'ar' ? 'للملفات التالفة أو التي تحتوي على صور:' : 'For corrupted or image-only files:'}
+              </h4>
+              <ul className={`text-sm text-purple-700 space-y-1 ${language === 'ar' ? 'text-right' : 'text-left'}`}>
+                <li className={`flex items-start ${language === 'ar' ? 'flex-row-reverse' : ''}`}>
+                  <span className={`${language === 'ar' ? 'ml-2' : 'mr-2'} text-purple-600`}>•</span>
+                  <span>
+                    {language === 'ar' 
+                      ? 'تأكد من أن الملف يحتوي على نص قابل للتحديد'
+                      : 'Ensure the file contains selectable text'}
+                  </span>
+                </li>
+                <li className={`flex items-start ${language === 'ar' ? 'flex-row-reverse' : ''}`}>
+                  <span className={`${language === 'ar' ? 'ml-2' : 'mr-2'} text-purple-600`}>•</span>
+                  <span>
+                    {language === 'ar' 
+                      ? 'جرب حفظ الملف بصيغة مختلفة'
+                      : 'Try saving the file in a different format'}
                   </span>
                 </li>
               </ul>

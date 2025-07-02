@@ -9,6 +9,22 @@
     <meta name="keywords" content="DGA, Saudi Arabia, Digital Governance, Compliance, Standard 5.4, Digital Culture" />
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    
+    <!-- PDF.js Scripts with proper version matching -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js" integrity="sha512-9Z8j94rlvvJTnDCQ2BLOYUi5QlU3fJG7lNX3K6JVRyQGVQrJl+Z7DJxb3AJFZQI9dL4fzWzUzP2bNdHX+pTmGA==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script>
+      // Configure PDF.js worker when the library loads
+      if (typeof pdfjsLib !== 'undefined') {
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+      } else {
+        // Fallback configuration
+        window.addEventListener('load', function() {
+          if (window.pdfjsLib) {
+            window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+          }
+        });
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>
