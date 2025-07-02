@@ -1,16 +1,26 @@
-// Direct OpenAI Vision API extraction - no local processing
+// PDF to image conversion and OpenAI Vision API extraction
 
 export async function extractTextFromFile(file: File, language: 'ar' | 'en' = 'ar'): Promise<string> {
-  console.log(`📤 Uploading ${file.name} directly to OpenAI Vision API...`);
+  console.log(`📤 Processing ${file.name} for OpenAI Vision API...`);
   
   try {
-    // Convert file to base64 regardless of type
-    const base64 = await fileToBase64(file);
+    let base64: string;
+    let mimeType: string;
     
-    // Use OpenAI Vision API for ALL file types
-    // Note: For multi-page PDFs, this will only process the first page or what's visible
-    // In production, you might want to use a PDF-to-image converter for multi-page support
-    const extractedText = await extractTextWithOpenAIVision(base64, file.name, file.type, language);
+    // Check if file is PDF
+    if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
+      console.log(`📄 Converting PDF ${file.name} to image...`);
+      const pdfImageData = await convertPdfToImage(file);
+      base64 = pdfImageData.base64;
+      mimeType = pdfImageData.mimeType;
+    } else {
+      // For image files, convert directly to base64
+      base64 = await fileToBase64(file);
+      mimeType = file.type || 'image/jpeg';
+    }
+    
+    // Use OpenAI Vision API with the converted image
+    const extractedText = await extractTextWithOpenAIVision(base64, file.name, mimeType, language);
     
     console.log(`✅ Successfully extracted ${extractedText.length} characters from ${file.name}`);
     return extractedText;
@@ -37,10 +47,69 @@ export async function extractTextFromFile(file: File, language: 'ar' | 'en' = 'a
   }
 }
 
+async function convertPdfToImage(file: File): Promise<{ base64: string; mimeType: string }> {
+  // Import PDF.js dynamically
+  const pdfjsLib = await import('pdfjs-dist');
+  
+  // Set worker path
+  pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.js';
+  
+  try {
+    // Convert file to array buffer
+    const arrayBuffer = await file.arrayBuffer();
+    
+    // Load PDF document
+    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    
+    // Get first page
+    const page = await pdf.getPage(1);
+    
+    // Create canvas
+    const canvas = document.createElement('canvas');
+    const context = canvas.getContext('2d');
+    
+    if (!context) {
+      throw new Error('Failed to get canvas context');
+    }
+    
+    // Set up viewport with high resolution for better text recognition
+    const viewport = page.getViewport({ scale: 2.0 });
+    canvas.height = viewport.height;
+    canvas.width = viewport.width;
+    
+    // Render page to canvas
+    const renderContext = {
+      canvasContext: context,
+      viewport: viewport
+    };
+    
+    await page.render(renderContext).promise;
+    
+    // Convert canvas to base64 PNG
+    const dataUrl = canvas.toDataURL('image/png', 0.95);
+    const base64 = dataUrl.split(',')[1];
+    
+    if (!base64) {
+      throw new Error('Failed to convert PDF page to base64');
+    }
+    
+    console.log(`✅ Successfully converted PDF page to image (${base64.length} characters)`);
+    
+    return {
+      base64,
+      mimeType: 'image/png'
+    };
+    
+  } catch (error) {
+    console.error('PDF conversion error:', error);
+    throw new Error('Failed to convert PDF to image for processing');
+  }
+}
+
 async function extractTextWithOpenAIVision(
   base64: string, 
   fileName: string, 
-  fileType: string, 
+  mimeType: string,
   language: 'ar' | 'en' = 'ar'
 ): Promise<string> {
   // Import OpenAI dynamically
@@ -60,12 +129,11 @@ async function extractTextWithOpenAIVision(
   });
   
   try {
-    // Note: OpenAI Vision API works best with images
-    // For PDFs and other documents, we'll treat them as images
-    // The API will attempt to read any visual text content
+    // Ensure we have a valid image MIME type
+    const validMimeType = mimeType.startsWith('image/') ? mimeType : 'image/png';
     
     const response = await openai.chat.completions.create({
-      model: "gpt-4o", // Using gpt-4o instead of gpt-4-vision-preview
+      model: "gpt-4o", // Using gpt-4o for vision capabilities
       messages: [
         {
           role: "user",
@@ -105,7 +173,7 @@ Focus especially on content related to:
             {
               type: "image_url",
               image_url: {
-                url: `data:image/jpeg;base64,${base64}`, // Treat all files as images
+                url: `data:${validMimeType};base64,${base64}`,
                 detail: "high" // High detail for better text recognition
               }
             }
