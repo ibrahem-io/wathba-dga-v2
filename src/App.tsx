@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import Header from './components/Header';
 import CriteriaUploadGrid from './components/CriteriaUploadGrid';
+import DocumentChatPage from './components/DocumentChatPage';
 import SystemStatusPanel from './components/SystemStatusPanel';
 import { langchainService } from './services/langchainService';
 
 function App() {
   const [language, setLanguage] = useState<'ar' | 'en'>('ar'); // Default to Arabic for Saudi government
+  const [currentPage, setCurrentPage] = useState<'audit' | 'chat'>('audit');
   const [apiError, setApiError] = useState<string>('');
   const [isInitializing, setIsInitializing] = useState(true);
 
@@ -47,7 +49,12 @@ function App() {
 
   return (
     <div className={`min-h-screen bg-gray-50 ${language === 'ar' ? 'font-arabic' : ''}`}>
-      <Header language={language} onLanguageChange={setLanguage} />
+      <Header 
+        language={language} 
+        onLanguageChange={setLanguage}
+        currentPage={currentPage}
+        onPageChange={setCurrentPage}
+      />
       
       <main className="container mx-auto px-4 py-8">
         <div className="max-w-7xl mx-auto">
@@ -81,7 +88,10 @@ function App() {
 
           {/* Main Content */}
           {!isInitializing && (
-            <CriteriaUploadGrid language={language} />
+            <>
+              {currentPage === 'audit' && <CriteriaUploadGrid language={language} />}
+              {currentPage === 'chat' && <DocumentChatPage language={language} />}
+            </>
           )}
         </div>
       </main>
@@ -99,9 +109,15 @@ function App() {
                 : '© 2024 Digital Government Authority - Kingdom of Saudi Arabia'}
             </p>
             <p className="text-xs mt-1 text-gray-500">
-              {language === 'ar'
-                ? 'أداة التدقيق الذكية لمعيار الثقافة والبيئة الرقمية 5.4 - مدعومة بنظام الوكلاء الذكيين'
-                : 'Smart Auditing Tool for Digital Culture and Environment Standard 5.4 - Powered by Multi-Agent System'}
+              {currentPage === 'chat' ? (
+                language === 'ar'
+                  ? 'محادثة ذكية مع الوثائق العربية - مدعومة بالذكاء الاصطناعي المتقدم'
+                  : 'Smart conversation with Arabic documents - Powered by advanced AI'
+              ) : (
+                language === 'ar'
+                  ? 'أداة التدقيق الذكية لمعيار الثقافة والبيئة الرقمية 5.4 - مدعومة بنظام الوكلاء الذكيين'
+                  : 'Smart Auditing Tool for Digital Culture and Environment Standard 5.4 - Powered by Multi-Agent System'
+              )}
             </p>
             <p className="text-xs mt-1 text-blue-600">
               {language === 'ar'
