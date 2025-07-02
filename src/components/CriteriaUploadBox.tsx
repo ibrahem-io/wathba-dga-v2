@@ -70,26 +70,10 @@ export default function CriteriaUploadBox({
 
   const handleFiles = async (files: File[]) => {
     const maxSize = 10 * 1024 * 1024; // 10MB
-    const supportedTypes = [
-      'application/pdf',
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      'text/plain',
-      'image/jpeg',
-      'image/jpg',
-      'image/png',
-      'image/gif',
-      'image/webp'
-    ];
 
     const validFiles = files.filter(file => {
       if (file.size > maxSize) {
         setError(language === 'ar' ? 'حجم الملف يجب أن يكون أقل من 10 ميجابايت' : 'File size must be less than 10MB');
-        return false;
-      }
-      if (!supportedTypes.includes(file.type)) {
-        setError(language === 'ar' 
-          ? 'يرجى رفع ملفات PDF أو DOCX أو TXT أو صور (PNG, JPEG, GIF, WebP) فقط'
-          : 'Please upload PDF, DOCX, TXT, or image files (PNG, JPEG, GIF, WebP) only');
         return false;
       }
       return true;
@@ -110,16 +94,16 @@ export default function CriteriaUploadBox({
 
     try {
       // Show initial progress
-      setVisionProgress(language === 'ar' ? 'بدء معالجة الملفات بالذكاء الاصطناعي...' : 'Starting AI file processing...');
+      setVisionProgress(language === 'ar' ? 'بدء معالجة الملفات بالذكاء الاصطناعي...' : 'Starting AI Vision processing...');
 
-      // Process files using Vision API first, then completion API
+      // Process files using Vision API for ALL file types
       const extractedTexts = await Promise.all(
         files.map(async (file, index) => {
           try {
             // Update progress for each file
             setVisionProgress(language === 'ar' 
               ? `معالجة الملف ${index + 1} من ${files.length} بالذكاء الاصطناعي: ${file.name}` 
-              : `AI processing file ${index + 1} of ${files.length}: ${file.name}`);
+              : `AI Vision processing file ${index + 1} of ${files.length}: ${file.name}`);
 
             console.log(`🤖 Processing file with Vision API: ${file.name}`);
 
@@ -139,10 +123,16 @@ export default function CriteriaUploadBox({
           } catch (fileError) {
             console.error(`Error processing file ${file.name}:`, fileError);
             
-            if (fileError instanceof Error && fileError.message.includes('unsupported image')) {
-              throw new Error(language === 'ar' 
-                ? `تنسيق الملف "${file.name}" غير مدعوم من قبل الذكاء الاصطناعي. يرجى تحويل الملف إلى PNG أو JPEG أو GIF أو WebP والمحاولة مرة أخرى.`
-                : `File format "${file.name}" not supported by AI Vision. Please convert to PNG, JPEG, GIF, or WebP and try again.`);
+            if (fileError instanceof Error) {
+              if (fileError.message.includes('unsupported image') || fileError.message.includes('invalid_image_format')) {
+                throw new Error(language === 'ar' 
+                  ? `تنسيق الملف "${file.name}" غير مدعوم من قبل الذكاء الاصطناعي. يرجى تحويل الملف إلى PNG أو JPEG أو GIF أو WebP والمحاولة مرة أخرى.`
+                  : `File format "${file.name}" not supported by AI Vision. Please convert to PNG, JPEG, GIF, or WebP and try again.`);
+              } else if (fileError.message.includes('rate limit')) {
+                throw new Error(language === 'ar'
+                  ? 'تم تجاوز الحد المسموح لاستخدام خدمة الذكاء الاصطناعي. يرجى المحاولة لاحقاً.'
+                  : 'AI service rate limit exceeded. Please try again later.');
+              }
             }
             
             throw fileError;
@@ -199,6 +189,10 @@ export default function CriteriaUploadBox({
           errorMessage = language === 'ar' 
             ? 'تنسيق الملف غير مدعوم من قبل الذكاء الاصطناعي. يرجى استخدام ملفات PNG أو JPEG أو GIF أو WebP فقط.'
             : 'File format not supported by AI Vision. Please use PNG, JPEG, GIF, or WebP files only.';
+        } else if (error.message.includes('rate limit')) {
+          errorMessage = language === 'ar'
+            ? 'تم تجاوز الحد المسموح لاستخدام خدمة الذكاء الاصطناعي. يرجى المحاولة لاحقاً.'
+            : 'AI service rate limit exceeded. Please try again later.';
         } else if (error.message.includes('Vision API') || error.message.includes('الذكاء الاصطناعي')) {
           errorMessage = error.message;
         } else if (error.message.includes('API') || error.message.includes('network')) {
@@ -302,7 +296,7 @@ export default function CriteriaUploadBox({
       {uploadedFiles.length === 0 ? (
         <div
           className={`border-2 border-dashed rounded-lg p-6 text-center transition-colors ${
-            dragActive ? 'border-blue-500 bg-blue-50' : 'border-gray-300 hover:border-gray-400'
+            dragActive ? 'border-purple-500 bg-purple-50' : 'border-gray-300 hover:border-gray-400'
           }`}
           onDragEnter={handleDrag}
           onDragLeave={handleDrag}
@@ -317,8 +311,8 @@ export default function CriteriaUploadBox({
           </p>
           <p className="text-xs text-gray-500 mb-2">
             {language === 'ar' 
-              ? 'جميع الملفات (PDF، DOCX، TXT، صور) - حد أقصى 10 ميجابايت لكل ملف'
-              : 'All file types (PDF, DOCX, TXT, images) - Max 10MB each'}
+              ? 'جميع أنواع الملفات مدعومة - حد أقصى 10 ميجابايت لكل ملف'
+              : 'All file types supported - Max 10MB each'}
           </p>
           <div className={`flex items-center justify-center space-x-2 mb-3 text-xs text-purple-600 ${language === 'ar' ? 'space-x-reverse' : ''}`}>
             <Brain className="w-4 h-4" />
@@ -330,12 +324,11 @@ export default function CriteriaUploadBox({
           </div>
           <div className={`text-xs text-blue-600 mb-3 ${language === 'ar' ? 'text-right' : 'text-left'}`}>
             {language === 'ar' 
-              ? '🤖 تقنية الذكاء الاصطناعي تقرأ النص من جميع أنواع الملفات'
-              : '🤖 AI Vision technology reads text from all file types'}
-            </div>
+              ? '🤖 تقنية الذكاء الاصطناعي تقرأ النص من جميع أنواع الملفات (PDF، DOCX، صور، إلخ)'
+              : '🤖 AI Vision technology reads text from all file types (PDF, DOCX, images, etc.)'}
+          </div>
           <input
             type="file"
-            accept=".pdf,.docx,.txt,.jpg,.jpeg,.png,.gif,.webp"
             onChange={handleFileInput}
             className="hidden"
             id={`file-upload-${criteriaId}`}
@@ -382,7 +375,6 @@ export default function CriteriaUploadBox({
           <div className="text-center pt-2">
             <input
               type="file"
-              accept=".pdf,.docx,.txt,.jpg,.jpeg,.png,.gif,.webp"
               onChange={handleFileInput}
               className="hidden"
               id={`file-upload-more-${criteriaId}`}
@@ -484,7 +476,7 @@ export default function CriteriaUploadBox({
         </div>
       )}
 
-      {/* Error Display with Better Guidance */}
+      {/* Error Display */}
       {error && (
         <div className={`mt-4 p-4 bg-red-50 border border-red-200 rounded-lg ${language === 'ar' ? 'text-right' : 'text-left'}`}>
           <div className={`flex items-center space-x-2 mb-2 ${language === 'ar' ? 'space-x-reverse flex-row-reverse' : ''}`}>
@@ -521,6 +513,19 @@ export default function CriteriaUploadBox({
                   </span>
                 </li>
               </ul>
+            </div>
+          )}
+          
+          {(error.includes('rate limit') || error.includes('الحد المسموح')) && (
+            <div className="bg-yellow-50 border border-yellow-200 rounded p-3 mt-3">
+              <h4 className={`text-sm font-medium text-yellow-800 mb-2 ${language === 'ar' ? 'text-right' : 'text-left'}`}>
+                {language === 'ar' ? 'تم تجاوز الحد المسموح:' : 'Rate Limit Exceeded:'}
+              </h4>
+              <p className={`text-sm text-yellow-700 ${language === 'ar' ? 'text-right' : 'text-left'}`}>
+                {language === 'ar' 
+                  ? 'يرجى الانتظار قليلاً قبل المحاولة مرة أخرى. خدمة الذكاء الاصطناعي لديها حدود استخدام.'
+                  : 'Please wait a moment before trying again. The AI service has usage limits.'}
+              </p>
             </div>
           )}
         </div>

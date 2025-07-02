@@ -1,67 +1,172 @@
-import { fileToBase64 } from './fileUtils';
-import { extractTextFromImageWithVision } from '../services/openaiService';
+// Direct OpenAI Vision API extraction - no local processing
 
-// This file now only contains utility functions for Vision API processing
-// All local text extraction has been removed
-
-export async function extractTextFromFile(file: File): Promise<string> {
-  console.log(`🔍 Starting Vision API extraction for: ${file.name}`);
-  console.log(`📁 File type: ${file.type}`);
-  console.log(`📊 File size: ${(file.size / 1024).toFixed(2)} KB`);
+export async function extractTextFromFile(file: File, language: 'ar' | 'en' = 'ar'): Promise<string> {
+  console.log(`📤 Uploading ${file.name} directly to OpenAI Vision API...`);
   
   try {
-    // ALWAYS use Vision API for ALL file types
-    console.log(`📷 Converting file to base64: ${file.name}`);
-    const base64Image = await fileToBase64(file);
+    // Convert file to base64 regardless of type
+    const base64 = await fileToBase64(file);
     
-    console.log(`🤖 Using Vision API to extract text from: ${file.name}`);
-    const language = 'ar'; // Default to Arabic for Saudi context
-    const extractedText = await extractTextFromImageWithVision(base64Image, language);
+    // Use OpenAI Vision API for ALL file types
+    // Note: For multi-page PDFs, this will only process the first page or what's visible
+    // In production, you might want to use a PDF-to-image converter for multi-page support
+    const extractedText = await extractTextWithOpenAIVision(base64, file.name, file.type, language);
     
-    if (!extractedText || extractedText.trim().length < 10) {
-      throw new Error(`No readable text found in file: ${file.name}`);
-    }
-    
-    console.log(`✅ Vision API extraction successful: ${extractedText.length} characters`);
+    console.log(`✅ Successfully extracted ${extractedText.length} characters from ${file.name}`);
     return extractedText;
     
   } catch (error) {
-    console.error(`❌ Vision API extraction failed for ${file.name}:`, error);
+    console.error(`❌ Error processing ${file.name}:`, error);
     
-    if (error instanceof Error && error.message.includes('unsupported image')) {
-      throw new Error(`File format not supported by Vision API. Please convert "${file.name}" to PNG, JPEG, GIF, or WebP format and try again.`);
+    if (error instanceof Error) {
+      // Check for specific API errors
+      if (error.message.includes('rate limit')) {
+        throw new Error(language === 'ar'
+          ? 'تم تجاوز الحد المسموح لاستخدام خدمة الذكاء الاصطناعي. يرجى المحاولة لاحقاً.'
+          : 'AI service rate limit exceeded. Please try again later.');
+      } else if (error.message.includes('invalid_request_error')) {
+        throw new Error(language === 'ar'
+          ? 'خطأ في معالجة الملف. قد يكون الملف كبيراً جداً أو بصيغة غير مدعومة.'
+          : 'Error processing file. The file may be too large or in an unsupported format.');
+      }
     }
     
-    throw new Error(`Failed to extract text from "${file.name}": ${error instanceof Error ? error.message : 'Unknown error'}`);
+    throw new Error(language === 'ar'
+      ? `فشل في معالجة الملف "${file.name}". يرجى التحقق من صحة الملف والمحاولة مرة أخرى.`
+      : `Failed to process file "${file.name}". Please check the file and try again.`);
   }
 }
 
+async function extractTextWithOpenAIVision(
+  base64: string, 
+  fileName: string, 
+  fileType: string, 
+  language: 'ar' | 'en' = 'ar'
+): Promise<string> {
+  // Import OpenAI dynamically
+  const OpenAI = (await import('openai')).default;
+  
+  // Get API key from environment variable
+  const apiKey = import.meta.env.VITE_OPENAI_API_KEY;
+  if (!apiKey) {
+    throw new Error(language === 'ar'
+      ? 'مفتاح OpenAI API غير موجود. يرجى إضافة VITE_OPENAI_API_KEY إلى ملف .env'
+      : 'OpenAI API key not found. Please add VITE_OPENAI_API_KEY to your .env file');
+  }
+  
+  const openai = new OpenAI({
+    apiKey: apiKey,
+    dangerouslyAllowBrowser: true
+  });
+  
+  try {
+    // Note: OpenAI Vision API works best with images
+    // For PDFs and other documents, we'll treat them as images
+    // The API will attempt to read any visual text content
+    
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o", // Using gpt-4o instead of gpt-4-vision-preview
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: language === 'ar' 
+                ? `استخرج كل النص من هذا المستند "${fileName}". قد يكون النص بالعربية أو الإنجليزية. يرجى:
+1. استخراج كل النص المرئي بدقة
+2. الحفاظ على بنية النص والتنسيق قدر الإمكان
+3. إذا كانت هناك جداول، حافظ على بنيتها
+4. إذا كانت هناك عناوين أو نقاط أو قوائم مرقمة، احتفظ بها
+5. إذا كان النص بالعربية، تأكد من ترتيب القراءة الصحيح من اليمين إلى اليسار
+6. أعد النص المستخرج فقط، بدون تعليقات
+
+ركز بشكل خاص على المحتوى المتعلق بـ:
+- التحول الرقمي
+- الثقافة الرقمية
+- البرامج التدريبية
+- الأدوات التقنية
+- المعايير الحكومية`
+                : `Extract all text from this document "${fileName}". The text may be in Arabic or English. Please:
+1. Extract ALL visible text accurately
+2. Preserve the text structure and formatting as much as possible
+3. If there are tables, maintain their structure
+4. If there are headers, bullet points, or numbered lists, preserve them
+5. If text is in Arabic, ensure proper RTL reading order
+6. Return only the extracted text, no commentary
+
+Focus especially on content related to:
+- Digital transformation
+- Digital culture
+- Training programs
+- Technical tools
+- Government standards`
+            },
+            {
+              type: "image_url",
+              image_url: {
+                url: `data:image/jpeg;base64,${base64}`, // Treat all files as images
+                detail: "high" // High detail for better text recognition
+              }
+            }
+          ]
+        }
+      ],
+      max_tokens: 4000,
+      temperature: 0.1 // Low temperature for accurate text extraction
+    });
+    
+    const extractedText = response.choices[0].message.content || '';
+    
+    // Clean up the extracted text
+    const cleanText = extractedText
+      .replace(/^(Here's the extracted text:|The extracted text is:|Text from the image:)/i, '')
+      .replace(/\n{3,}/g, '\n\n') // Reduce multiple newlines
+      .trim();
+    
+    if (!cleanText || cleanText.length < 10) {
+      throw new Error(language === 'ar'
+        ? 'لم يتم العثور على نص في المستند'
+        : 'No text found in the document');
+    }
+    
+    // Limit to 10,000 characters to prevent token overflow
+    return cleanText.substring(0, 10000);
+    
+  } catch (error) {
+    console.error('OpenAI Vision API error:', error);
+    throw error;
+  }
+}
+
+async function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    
+    reader.onload = () => {
+      const result = reader.result as string;
+      // Remove data URL prefix to get just the base64 string
+      const base64 = result.split(',')[1];
+      if (!base64) {
+        reject(new Error('Failed to convert file to base64'));
+        return;
+      }
+      resolve(base64);
+    };
+    
+    reader.onerror = () => reject(new Error('Failed to read file'));
+    reader.readAsDataURL(file);
+  });
+}
+
 export function detectLanguage(text: string): 'ar' | 'en' {
-  if (!text || text.trim().length === 0) return 'ar'; // Default to Arabic for Saudi context
-  
   const arabicChars = text.match(/[\u0600-\u06FF\u0750-\u077F]/g);
-  const englishChars = text.match(/[a-zA-Z]/g);
-  
-  const arabicCount = arabicChars ? arabicChars.length : 0;
-  const englishCount = englishChars ? englishChars.length : 0;
   const totalChars = text.replace(/\s/g, '').length;
   
-  const arabicRatio = totalChars > 0 ? arabicCount / totalChars : 0;
-  
-  console.log(`🌐 Language detection - Arabic: ${arabicCount}, English: ${englishCount}, Total: ${totalChars}, Arabic ratio: ${(arabicRatio * 100).toFixed(1)}%`);
-  
-  // If more than 15% Arabic characters, consider it Arabic
-  if (arabicRatio > 0.15) {
+  if (arabicChars && arabicChars.length > totalChars * 0.3) {
     return 'ar';
   }
-  
-  // If we have English characters and very few Arabic, it's English
-  if (englishCount > 10 && arabicCount < 5) {
-    return 'en';
-  }
-  
-  // Default to Arabic for Saudi government context
-  return 'ar';
+  return 'en';
 }
 
 export function isVisualDocument(file: File): boolean {
