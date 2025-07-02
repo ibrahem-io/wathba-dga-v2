@@ -1,4 +1,4 @@
-// src/services/openaiService.ts - Using Assistants API for proper file handling
+// src/services/openaiService.ts - Fixed thread ID handling
 
 import OpenAI from 'openai';
 
@@ -127,10 +127,12 @@ export async function analyzeDocumentForCriteria(
     // Step 1: Upload files to OpenAI
     console.log('📤 Uploading files to OpenAI...');
     uploadedFileIds = await Promise.all(files.map(uploadFileToOpenAI));
+    console.log(`✅ Uploaded ${uploadedFileIds.length} files:`, uploadedFileIds);
 
     // Step 2: Create assistant
     console.log('🧠 Creating analysis assistant...');
     assistantId = await createAnalysisAssistant(language);
+    console.log(`✅ Assistant created: ${assistantId}`);
 
     // Step 3: Create thread with uploaded files
     console.log('💬 Creating analysis thread...');
@@ -205,6 +207,7 @@ Please respond in JSON format only:
 }
 `;
 
+    // FIXED: Create thread first, then get the ID
     const thread = await openai.beta.threads.create({
       messages: [
         {
@@ -218,13 +221,22 @@ Please respond in JSON format only:
       ]
     });
 
+    // FIXED: Properly assign thread ID
     threadId = thread.id;
+    console.log(`✅ Thread created: ${threadId}`);
+
+    // Validate thread ID before proceeding
+    if (!threadId || threadId === 'undefined') {
+      throw new Error('Failed to create thread - thread ID is undefined');
+    }
 
     // Step 4: Run the assistant
     console.log('🏃 Running analysis...');
     const run = await openai.beta.threads.runs.create(threadId, {
       assistant_id: assistantId
     });
+
+    console.log(`✅ Run created: ${run.id}`);
 
     // Step 5: Wait for completion
     console.log('⏳ Waiting for analysis to complete...');
@@ -241,6 +253,8 @@ Please respond in JSON format only:
     }
 
     if (runStatus.status !== 'completed') {
+      console.error('❌ Run failed with status:', runStatus.status);
+      console.error('❌ Last error:', runStatus.last_error);
       throw new Error(`Analysis failed with status: ${runStatus.status}. ${runStatus.last_error?.message || ''}`);
     }
 
@@ -287,9 +301,24 @@ Please respond in JSON format only:
 
   } catch (error) {
     console.error('❌ Assistants API Error:', error);
+    
+    // Provide more specific error messages
+    let errorMessage = 'Unknown error';
+    if (error instanceof Error) {
+      if (error.message.includes('thread_id')) {
+        errorMessage = 'Failed to create analysis thread. Please try again.';
+      } else if (error.message.includes('Upload failed')) {
+        errorMessage = 'Failed to upload files to OpenAI. Please check file format and size.';
+      } else if (error.message.includes('API key')) {
+        errorMessage = 'Invalid OpenAI API key. Please check your configuration.';
+      } else {
+        errorMessage = error.message;
+      }
+    }
+    
     throw new Error(language === 'ar' 
-      ? `فشل تحليل الوثائق: ${error instanceof Error ? error.message : 'خطأ غير معروف'}`
-      : `Document analysis failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      ? `فشل تحليل الوثائق: ${errorMessage}`
+      : `Document analysis failed: ${errorMessage}`);
   } finally {
     // Cleanup
     try {
