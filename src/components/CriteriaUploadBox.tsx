@@ -1,6 +1,7 @@
 import React, { useState, useCallback } from 'react';
-import { Upload, File, X, AlertCircle, CheckCircle, XCircle, Brain, Loader, Users, FileText, Eye, Zap } from 'lucide-react';
-import { langchainService } from '../services/langchainService';
+import { Upload, File, X, AlertCircle, CheckCircle, XCircle, Brain, Loader, Users, FileText, Eye, Zap, Bug } from 'lucide-react';
+import { extractTextFromFile } from '../utils/fileExtractor';
+import { analyzeDocumentForCriteria } from '../services/openaiService';
 
 interface CriteriaAnalysis {
   score: number;
@@ -22,6 +23,13 @@ interface CriteriaUploadBoxProps {
   onAnalysisComplete: (criteriaId: string, analysis: CriteriaAnalysis) => void;
 }
 
+interface DebugInfo {
+  extractedTexts: Array<{fileName: string, textLength: number, preview: string}>;
+  combinedTextLength: number;
+  combinedTextPreview: string;
+  error?: string;
+}
+
 export default function CriteriaUploadBox({
   language,
   criteriaId,
@@ -38,6 +46,8 @@ export default function CriteriaUploadBox({
   const [dragActive, setDragActive] = useState(false);
   const [analysisProgress, setAnalysisProgress] = useState<string>('');
   const [processingMethod, setProcessingMethod] = useState<string>('');
+  const [debugInfo, setDebugInfo] = useState<DebugInfo | null>(null);
+  const [showDebug, setShowDebug] = useState(false);
 
   const handleDrag = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -104,65 +114,98 @@ export default function CriteriaUploadBox({
   const analyzeFiles = async (files: File[]) => {
     if (files.length === 0) return;
 
+    console.log(`🚀 Starting analysis for ${files.length} files`);
     setIsAnalyzing(true);
     setError('');
+    setDebugInfo(null);
     setProcessingMethod('');
     setAnalysisProgress(language === 'ar' ? 'بدء التحليل المتقدم...' : 'Starting advanced analysis...');
 
     try {
-      const primaryFile = files[0];
+      // Extract text from all files with detailed logging
+      console.log('📝 Starting text extraction...');
+      const extractionResults = await Promise.all(
+        files.map(async (file, index) => {
+          console.log(`📄 Extracting text from file ${index + 1}/${files.length}: ${file.name}`);
+          try {
+            const text = await extractTextFromFile(file);
+            console.log(`✅ Successfully extracted ${text.length} characters from ${file.name}`);
+            return {
+              fileName: file.name,
+              text: text,
+              textLength: text.length,
+              preview: text.substring(0, 200)
+            };
+          } catch (error) {
+            console.error(`❌ Failed to extract text from ${file.name}:`, error);
+            throw error;
+          }
+        })
+      );
+
+      // Combine all text content
+      const combinedText = extractionResults.map(result => result.text).join('\n\n--- NEXT DOCUMENT ---\n\n');
       
-      // Set processing method based on file type
-      if (primaryFile.type.startsWith('image/')) {
-        setProcessingMethod('Vision API');
-        setAnalysisProgress(language === 'ar' ? 'تحليل الصورة باستخدام OpenAI Vision API...' : 'Analyzing image using OpenAI Vision API...');
-      } else if (primaryFile.type === 'application/pdf') {
-        setProcessingMethod('Hybrid PDF + Vision');
-        setAnalysisProgress(language === 'ar' ? 'معالجة PDF متقدمة (استخراج نص + Vision API للمستندات الممسوحة ضوئياً)...' : 'Advanced PDF processing (text extraction + Vision API for scanned documents)...');
-      } else {
-        setProcessingMethod('Text Extraction');
-        setAnalysisProgress(language === 'ar' ? 'استخراج النص المتقدم...' : 'Advanced text extraction...');
+      // Create debug info
+      const debug: DebugInfo = {
+        extractedTexts: extractionResults.map(r => ({
+          fileName: r.fileName,
+          textLength: r.textLength,
+          preview: r.preview
+        })),
+        combinedTextLength: combinedText.length,
+        combinedTextPreview: combinedText.substring(0, 500)
+      };
+      setDebugInfo(debug);
+
+      console.log(`📊 Combined text length: ${combinedText.length} characters`);
+      console.log(`🔤 Combined text preview: "${combinedText.substring(0, 200)}..."`);
+
+      // Validate extracted text
+      if (!combinedText || combinedText.trim().length < 50) {
+        const errorMsg = language === 'ar' 
+          ? `لم يتم العثور على نص كافٍ في الملفات للتحليل. تم استخراج ${combinedText.length} حرف فقط.`
+          : `Insufficient text found in files for analysis. Only ${combinedText.length} characters extracted.`;
+        
+        setDebugInfo(prev => ({ ...prev!, error: errorMsg }));
+        throw new Error(errorMsg);
       }
 
-      console.log(`🚀 Starting Vision-enhanced analysis for criteria ${criteriaId} with file:`, primaryFile.name);
-      
-      const result = await langchainService.analyzeCriteria(primaryFile, criteriaId, language);
-      
-      console.log(`✅ Vision-enhanced analysis completed for criteria ${criteriaId}:`, result);
-      
-      const analysis: CriteriaAnalysis = {
-        score: result.score,
-        status: result.status,
-        confidence: result.confidence,
-        evidence: result.evidence.map(e => e.text),
-        findings: result.findings,
-        recommendations: result.recommendations,
-        documentContent: result.documentContent
-      };
+      setAnalysisProgress(language === 'ar' ? 'إرسال للذكاء الاصطناعي للتحليل...' : 'Sending to AI for analysis...');
+      console.log(`🤖 Sending to AI for analysis...`);
+      console.log(`📋 Criteria: ${criteriaId}`);
+      console.log(`🌐 Language: ${language}`);
 
-      setAnalysis(analysis);
-      onAnalysisComplete(criteriaId, analysis);
+      // Analyze against specific criteria
+      const result = await analyzeDocumentForCriteria(combinedText, criteriaId, language);
+      
+      console.log(`✅ AI analysis complete:`, result);
+      
+      // Add document content summary
+      const analysisWithContent: CriteriaAnalysis = {
+        ...result,
+        documentContent: combinedText.substring(0, 1000) + (combinedText.length > 1000 ? '...' : '')
+      };
+      
+      setAnalysis(analysisWithContent);
+      onAnalysisComplete(criteriaId, analysisWithContent);
       setAnalysisProgress(language === 'ar' ? 'اكتمل التحليل المتقدم بنجاح!' : 'Advanced analysis completed successfully!');
 
     } catch (error) {
-      console.error('Vision-enhanced analysis error:', error);
+      console.error('❌ Analysis error:', error);
       const errorMessage = error instanceof Error ? error.message : 
         (language === 'ar' 
-          ? 'حدث خطأ أثناء التحليل المتقدم للملفات'
-          : 'An error occurred during advanced file analysis');
+          ? 'حدث خطأ أثناء تحليل الملفات'
+          : 'An error occurred while analyzing the files');
       
       setError(errorMessage);
-      setAnalysisProgress('');
+      setDebugInfo(prev => ({ ...prev!, error: errorMessage }));
       
       // Provide specific error guidance
-      if (errorMessage.includes('Vision')) {
+      if (errorMessage.includes('Insufficient text')) {
         setError(language === 'ar' 
-          ? 'فشل في تحليل الوثيقة باستخدام Vision API. يرجى التأكد من وضوح النص في الصورة وجودة الدقة.'
-          : 'Vision API analysis failed. Please ensure the text in the image is clear and high resolution.');
-      } else if (errorMessage.includes('PDF')) {
-        setError(language === 'ar' 
-          ? 'فشل في معالجة PDF المتقدمة. قد يكون الملف محمي بكلمة مرور أو تالف أو يحتوي على صور فقط.'
-          : 'Advanced PDF processing failed. The file may be password-protected, corrupted, or contain only images.');
+          ? 'لم يتم العثور على نص كافٍ في الملفات. يرجى التأكد من أن الملفات تحتوي على نص قابل للقراءة أو تحويلها إلى تنسيق TXT.'
+          : 'Insufficient text found in files. Please ensure files contain readable text or convert them to TXT format.');
       } else if (errorMessage.includes('API key')) {
         setError(language === 'ar' 
           ? 'مفتاح OpenAI API غير صحيح أو غير موجود. يرجى التحقق من الإعدادات.'
@@ -183,6 +226,7 @@ export default function CriteriaUploadBox({
       setError('');
       setAnalysisProgress('');
       setProcessingMethod('');
+      setDebugInfo(null);
     } else {
       analyzeFiles(newFiles);
     }
@@ -231,17 +275,6 @@ export default function CriteriaUploadBox({
       return <Zap className="w-5 h-5 text-red-600" />;
     }
     return <File className="w-5 h-5 text-blue-600" />;
-  };
-
-  const getProcessingMethodIcon = () => {
-    switch (processingMethod) {
-      case 'Vision API':
-        return <Eye className="w-4 h-4 text-purple-600" />;
-      case 'Hybrid PDF + Vision':
-        return <Zap className="w-4 h-4 text-red-600" />;
-      default:
-        return <FileText className="w-4 h-4 text-blue-600" />;
-    }
   };
 
   return (
@@ -306,8 +339,8 @@ export default function CriteriaUploadBox({
           </p>
           <p className="text-xs text-green-600 mb-3">
             {language === 'ar' 
-              ? '✨ استخراج نص ذكي + تحليل بصري متقدم + وكلاء ذكيين'
-              : '✨ Smart text extraction + Advanced visual analysis + Smart agents'}
+              ? '✨ استخراج نص ذكي + تحليل بصري متقدم'
+              : '✨ Smart text extraction + Advanced visual analysis'}
           </p>
           <input
             type="file"
@@ -338,16 +371,6 @@ export default function CriteriaUploadBox({
                   </p>
                   <p className={`text-xs text-gray-500 ${language === 'ar' ? 'text-right' : 'text-left'}`}>
                     {formatFileSize(file.size)}
-                    {file.type.startsWith('image/') && (
-                      <span className="ml-2 text-purple-600">
-                        {language === 'ar' ? '(صورة - Vision API)' : '(Image - Vision API)'}
-                      </span>
-                    )}
-                    {file.type === 'application/pdf' && (
-                      <span className="ml-2 text-red-600">
-                        {language === 'ar' ? '(PDF - معالجة هجينة + Vision)' : '(PDF - Hybrid + Vision)'}
-                      </span>
-                    )}
                   </p>
                 </div>
               </div>
@@ -387,18 +410,56 @@ export default function CriteriaUploadBox({
         <div className={`mt-4 p-3 bg-blue-50 rounded-lg flex items-center space-x-2 ${language === 'ar' ? 'space-x-reverse' : ''}`}>
           <div className="flex items-center space-x-2">
             <Loader className="w-5 h-5 text-blue-600 animate-spin" />
-            {getProcessingMethodIcon()}
-            <Users className="w-4 h-4 text-purple-600" />
+            <Brain className="w-4 h-4 text-purple-600" />
           </div>
           <div className="flex-1">
             <span className="text-blue-700 text-sm font-medium">
-              {processingMethod 
-                ? (language === 'ar' ? `${processingMethod} + وكلاء ذكيين` : `${processingMethod} + Smart Agents`)
-                : (language === 'ar' ? 'تحليل متقدم متعدد الوكلاء' : 'Advanced Multi-Agent Analysis')
-              }
+              {language === 'ar' ? 'تحليل متقدم بالذكاء الاصطناعي' : 'Advanced AI Analysis'}
             </span>
             <p className="text-xs text-blue-600 mt-1">{analysisProgress}</p>
           </div>
+        </div>
+      )}
+
+      {/* Debug Information */}
+      {debugInfo && (
+        <div className="mt-4">
+          <button
+            onClick={() => setShowDebug(!showDebug)}
+            className={`flex items-center space-x-1 text-xs text-gray-500 hover:text-gray-700 ${language === 'ar' ? 'space-x-reverse' : ''}`}
+          >
+            <Bug className="w-3 h-3" />
+            <span>{language === 'ar' ? 'عرض معلومات التشخيص' : 'Show Debug Info'}</span>
+          </button>
+          
+          {showDebug && (
+            <div className="mt-2 p-3 bg-gray-50 rounded text-xs">
+              <div className="space-y-2">
+                <div>
+                  <strong>{language === 'ar' ? 'النصوص المستخرجة:' : 'Extracted Texts:'}</strong>
+                  {debugInfo.extractedTexts.map((text, index) => (
+                    <div key={index} className="ml-2 border-l-2 border-gray-300 pl-2">
+                      <div><strong>{text.fileName}:</strong> {text.textLength} chars</div>
+                      <div className="text-gray-600 italic">"{text.preview}..."</div>
+                    </div>
+                  ))}
+                </div>
+                <div>
+                  <strong>{language === 'ar' ? 'النص المجمع:' : 'Combined Text:'}</strong> {debugInfo.combinedTextLength} chars
+                </div>
+                <div>
+                  <strong>{language === 'ar' ? 'معاينة:' : 'Preview:'}</strong>
+                  <div className="text-gray-600 italic">"{debugInfo.combinedTextPreview}..."</div>
+                </div>
+                {debugInfo.error && (
+                  <div>
+                    <strong className="text-red-600">{language === 'ar' ? 'خطأ:' : 'Error:'}</strong>
+                    <div className="text-red-600">{debugInfo.error}</div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -407,13 +468,9 @@ export default function CriteriaUploadBox({
         <div className="mt-4 space-y-3">
           {/* Enhanced Processing Badge */}
           <div className={`flex items-center space-x-2 ${language === 'ar' ? 'space-x-reverse' : ''}`}>
-            <Eye className="w-4 h-4 text-purple-500" />
+            <Brain className="w-4 h-4 text-purple-500" />
             <span className="text-xs text-purple-600 font-medium">
-              {language === 'ar' ? 'Vision API' : 'Vision API'}
-            </span>
-            <Users className="w-4 h-4 text-blue-500" />
-            <span className="text-xs text-blue-600 font-medium">
-              {language === 'ar' ? 'وكلاء ذكيين' : 'Smart Agents'}
+              {language === 'ar' ? 'تحليل ذكي متقدم' : 'Advanced AI Analysis'}
             </span>
           </div>
 
