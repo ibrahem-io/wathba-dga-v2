@@ -1,8 +1,3 @@
-import * as pdfjsLib from 'pdfjs-dist';
-
-// Set up PDF.js worker to use local file
-pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.js';
-
 export async function extractTextFromFile(file: File): Promise<string> {
   console.log(`🔍 Starting extraction for: ${file.name}`);
   console.log(`📁 File type: ${file.type}`);
@@ -19,9 +14,9 @@ export async function extractTextFromFile(file: File): Promise<string> {
         if (file.type === 'application/pdf') {
           text = await extractTextFromPDF(arrayBuffer, file.name);
         } else if (file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
-          text = await extractTextFromDOCX(arrayBuffer, file.name);
+          text = await extractTextFromDOCX(arrayBuffer);
         } else if (file.type === 'text/plain') {
-          text = await extractTextFromTXT(arrayBuffer, file.name);
+          text = await extractTextFromTXT(arrayBuffer);
         } else if (file.type.startsWith('image/')) {
           // For image files, return empty string - they will be processed by Vision API
           console.log(`📷 Image file detected: ${file.name} - will use Vision API`);
@@ -57,316 +52,169 @@ export async function extractTextFromFile(file: File): Promise<string> {
 async function extractTextFromPDF(arrayBuffer: ArrayBuffer, fileName: string): Promise<string> {
   console.log(`📕 Processing PDF file: ${fileName}`);
   
+  // Try multiple extraction methods in order of preference
+  
+  // Method 1: Try PDF.js (best for most PDFs)
   try {
-    // Enhanced PDF.js configuration for better compatibility
-    const loadingTask = pdfjsLib.getDocument({
-      data: arrayBuffer,
-      useSystemFonts: true,
-      disableFontFace: false,
-      useWorkerFetch: false,
-      isEvalSupported: false,
-      // Remove cMapUrl to avoid additional network requests
-    });
+    return await extractTextWithPDFJS(arrayBuffer);
+  } catch (error) {
+    console.warn('PDF.js extraction failed:', error);
+  }
+
+  // Method 2: Try manual extraction with improved regex
+  try {
+    return await extractTextFromPDFManualAdvanced(arrayBuffer);
+  } catch (error) {
+    console.warn('Manual advanced extraction failed:', error);
+  }
+
+  // Method 3: Basic manual extraction as last resort
+  try {
+    return await extractTextFromPDFBasic(arrayBuffer);
+  } catch (error) {
+    console.warn('Basic manual extraction failed:', error);
+  }
+
+  // If all methods fail, provide a helpful error
+  throw new Error(`لا يمكن استخراج النص من الملف "${fileName}". قد يكون الملف معقداً أو ممسوحاً ضوئياً أو محمياً بكلمة مرور. يرجى تجربة ملف PDF آخر أو تحويل الملف إلى تنسيق نصي.
+
+Failed to extract text from "${fileName}". This may be a complex, scanned, or password-protected PDF. Please try another PDF file or convert it to text format.`);
+}
+
+async function extractTextWithPDFJS(arrayBuffer: ArrayBuffer): Promise<string> {
+  try {
+    // Dynamically import PDF.js to avoid bundle issues
+    const pdfjsLib = await import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js');
     
-    const pdf = await loadingTask.promise;
-    console.log(`📖 PDF loaded successfully: ${pdf.numPages} pages`);
+    // Configure worker
+    if (typeof window !== 'undefined') {
+      (pdfjsLib as any).GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    }
+
+    const pdf = await (pdfjsLib as any).getDocument({ 
+      data: arrayBuffer,
+      verbosity: 0 // Reduce console output
+    }).promise;
     
     let fullText = '';
+    const maxPages = Math.min(pdf.numPages, 20); // Limit to first 20 pages
     
-    // Extract text from each page with better error handling
-    for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+    for (let i = 1; i <= maxPages; i++) {
       try {
-        const page = await pdf.getPage(pageNum);
-        const textContent = await page.getTextContent({
-          normalizeWhitespace: false,
-          disableCombineTextItems: false
-        });
+        const page = await pdf.getPage(i);
+        const textContent = await page.getTextContent();
         
-        // Combine text items from the page with better spacing
         const pageText = textContent.items
           .map((item: any) => {
-            if (item.str && item.str.trim()) {
-              return item.str;
-            }
-            return '';
+            // Handle both string items and objects with str property
+            return typeof item === 'string' ? item : (item.str || '');
           })
-          .filter(text => text.length > 0)
+          .filter(text => text.trim().length > 0)
           .join(' ');
         
         if (pageText.trim()) {
-          fullText += pageText + '\n';
+          fullText += pageText + '\n\n';
         }
-        
-        console.log(`📄 Page ${pageNum}: ${pageText.length} characters extracted`);
       } catch (pageError) {
-        console.warn(`⚠️ Error extracting text from page ${pageNum}:`, pageError);
-        // Continue with other pages
+        console.warn(`Failed to extract page ${i}:`, pageError);
+        continue;
       }
     }
     
-    if (!fullText || fullText.trim().length === 0) {
-      console.warn(`⚠️ No text content found in PDF ${fileName}`);
-      throw new Error(`PDF "${fileName}" contains no readable text. This may be a scanned document or image-based PDF.`);
+    const cleanText = cleanExtractedText(fullText);
+    
+    if (cleanText.length < 50) {
+      throw new Error('PDF.js extracted insufficient text');
     }
     
-    // Clean up the extracted text
-    const cleanedText = cleanExtractedText(fullText);
-    
-    // Limit to prevent token overflow
-    let finalText = cleanedText;
-    if (finalText.length > 80000) {
-      finalText = finalText.substring(0, 80000) + '\n\n[Text truncated due to length...]';
-      console.log(`✂️ Text truncated to 80,000 characters`);
-    }
-    
-    if (finalText.length < 50) {
-      throw new Error(`PDF "${fileName}" extracted text is too short (${finalText.length} characters). May be a scanned document.`);
-    }
-    
-    console.log(`✅ PDF extraction successful: ${finalText.length} characters`);
-    return finalText;
-    
+    return cleanText;
   } catch (error) {
-    console.error(`❌ PDF parsing failed for ${fileName}:`, error);
-    
-    if (error instanceof Error) {
-      if (error.message.includes('Invalid PDF')) {
-        throw new Error(`PDF "${fileName}" is corrupted or invalid.`);
-      } else if (error.message.includes('Password')) {
-        throw new Error(`PDF "${fileName}" is password-protected.`);
-      } else if (error.message.includes('no readable text')) {
-        throw new Error(`PDF "${fileName}" contains no readable text. Please convert to TXT format or use OCR.`);
-      } else if (error.message.includes('worker')) {
-        // Fallback for worker issues - try manual text extraction
-        console.log(`🔄 Worker failed, trying manual extraction for ${fileName}`);
-        return await extractTextFromPDFManual(arrayBuffer, fileName);
-      }
-    }
-    
-    throw new Error(`Failed to extract text from PDF "${fileName}". ${error instanceof Error ? error.message : 'Unknown error'}`);
+    throw new Error(`PDF.js extraction failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }
 
-// Fallback manual PDF text extraction
-async function extractTextFromPDFManual(arrayBuffer: ArrayBuffer, fileName: string): Promise<string> {
-  console.log(`🔧 Manual PDF extraction for: ${fileName}`);
-  
-  try {
-    const uint8Array = new Uint8Array(arrayBuffer);
-    const pdfContent = new TextDecoder('latin1').decode(uint8Array);
-    
-    let extractedText = '';
-    
-    // Method 1: Extract from text objects (BT/ET)
-    const textObjectRegex = /BT\s*([\s\S]*?)\s*ET/g;
-    let match;
-    
-    while ((match = textObjectRegex.exec(pdfContent)) !== null) {
-      const textObject = match[1];
-      
-      // Extract from Tj operators
-      const tjRegex = /\(((?:[^()\\]|\\.|\\[0-7]{1,3})*)\)\s*Tj/g;
-      let tjMatch;
-      
-      while ((tjMatch = tjRegex.exec(textObject)) !== null) {
-        const textContent = decodePDFString(tjMatch[1]);
-        if (textContent && textContent.trim().length > 0) {
-          extractedText += textContent + ' ';
-        }
-      }
-      
-      // Extract from TJ arrays
-      const tjArrayRegex = /\[((?:[^\[\]\\]|\\.|\\[0-7]{1,3})*)\]\s*TJ/g;
-      let tjArrayMatch;
-      
-      while ((tjArrayMatch = tjArrayRegex.exec(textObject)) !== null) {
-        const arrayContent = tjArrayMatch[1];
-        const stringRegex = /\(((?:[^()\\]|\\.|\\[0-7]{1,3})*)\)/g;
-        let stringMatch;
-        
-        while ((stringMatch = stringRegex.exec(arrayContent)) !== null) {
-          const textContent = decodePDFString(stringMatch[1]);
-          if (textContent && textContent.trim().length > 0) {
-            extractedText += textContent + ' ';
-          }
-        }
-      }
-    }
-    
-    console.log(`🔧 Manual extraction result: ${extractedText.length} characters`);
-    
-    if (extractedText.length < 50) {
-      throw new Error(`Manual PDF extraction failed - insufficient text found (${extractedText.length} characters)`);
-    }
-    
-    return cleanExtractedText(extractedText);
-    
-  } catch (error) {
-    console.error(`❌ Manual PDF extraction failed:`, error);
-    throw new Error(`Both PDF.js and manual extraction failed for "${fileName}". This may be a complex or scanned PDF.`);
-  }
-}
-
-function decodePDFString(pdfString: string): string {
-  if (!pdfString) return '';
-  
-  let decoded = pdfString;
-
-  try {
-    // Handle octal escape sequences
-    decoded = decoded.replace(/\\([0-7]{1,3})/g, (match, octal) => {
-      const charCode = parseInt(octal, 8);
-      return charCode > 0 && charCode < 256 ? String.fromCharCode(charCode) : '';
-    });
-
-    // Handle hex escape sequences
-    decoded = decoded.replace(/\\x([0-9a-fA-F]{2})/g, (match, hex) => {
-      const charCode = parseInt(hex, 16);
-      return charCode > 0 && charCode < 256 ? String.fromCharCode(charCode) : '';
-    });
-
-    // Handle Unicode escape sequences
-    decoded = decoded.replace(/\\u([0-9a-fA-F]{4})/g, (match, unicode) => {
-      const charCode = parseInt(unicode, 16);
-      return String.fromCharCode(charCode);
-    });
-
-    // Handle common escape sequences
-    decoded = decoded.replace(/\\n/g, '\n');
-    decoded = decoded.replace(/\\r/g, '\r');
-    decoded = decoded.replace(/\\t/g, '\t');
-    decoded = decoded.replace(/\\\\/g, '\\');
-    decoded = decoded.replace(/\\'/g, "'");
-    decoded = decoded.replace(/\\"/g, '"');
-    decoded = decoded.replace(/\\\(/g, '(');
-    decoded = decoded.replace(/\\\)/g, ')');
-
-  } catch (error) {
-    console.warn('PDF string decoding error:', error);
-    return pdfString; // Return original if decoding fails
-  }
-
-  return decoded;
-}
-
-async function extractTextFromTXT(arrayBuffer: ArrayBuffer, fileName: string): Promise<string> {
-  console.log(`📄 Processing TXT file: ${fileName}`);
-  
+async function extractTextFromPDFManualAdvanced(arrayBuffer: ArrayBuffer): Promise<string> {
   const uint8Array = new Uint8Array(arrayBuffer);
-  let text = '';
+  const text = new TextDecoder('latin1').decode(uint8Array);
   
-  // Try UTF-8 first
-  try {
-    text = new TextDecoder('utf-8').decode(uint8Array);
-    if (text && !text.includes('�')) {
-      console.log(`✅ UTF-8 decoding successful for ${fileName}`);
-      return cleanExtractedText(text);
-    }
-  } catch (error) {
-    console.warn(`⚠️ UTF-8 decoding failed for ${fileName}, trying other encodings`);
+  let extractedText = '';
+  
+  // Method 1: Look for text objects with improved regex
+  const textObjectRegex = /BT\s+(.*?)\s+ET/gs;
+  const textMatches = text.match(textObjectRegex);
+  
+  if (textMatches && textMatches.length > 0) {
+    extractedText = textMatches
+      .map(match => {
+        // Extract text from Tj and TJ operators
+        const tjMatches = match.match(/\((.*?)\)\s*(?:Tj|TJ)/g);
+        if (tjMatches) {
+          return tjMatches
+            .map(tj => tj.replace(/^\(|\)\s*(?:Tj|TJ)$/g, ''))
+            .join(' ');
+        }
+        return '';
+      })
+      .filter(t => t.trim().length > 0)
+      .join(' ');
   }
   
-  // Try UTF-16 for Arabic text
-  try {
-    text = new TextDecoder('utf-16').decode(uint8Array);
-    if (text && !text.includes('�') && text.length > 10) {
-      console.log(`✅ UTF-16 decoding successful for ${fileName}`);
-      return cleanExtractedText(text);
-    }
-  } catch (error) {
-    console.warn(`⚠️ UTF-16 decoding failed for ${fileName}`);
+  // Method 2: Look for stream content if text objects don't work
+  if (!extractedText || extractedText.length < 50) {
+    const streamRegex = /stream\s*([\s\S]*?)\s*endstream/g;
+    const streamMatches = [...text.matchAll(streamRegex)];
+    
+    extractedText = streamMatches
+      .map(match => {
+        let content = match[1];
+        // Try to decode common PDF text patterns
+        content = content.replace(/\\\d{3}/g, ' '); // Replace octal escapes
+        content = content.replace(/[^\x20-\x7E\u0600-\u06FF\u0750-\u077F\u00A0-\u00FF]/g, ' ');
+        return content;
+      })
+      .join(' ');
   }
   
-  // Try Windows-1256 for Arabic text
-  try {
-    text = new TextDecoder('windows-1256').decode(uint8Array);
-    if (text && text.length > 10) {
-      console.log(`✅ Windows-1256 decoding successful for ${fileName}`);
-      return cleanExtractedText(text);
-    }
-  } catch (error) {
-    console.warn(`⚠️ Windows-1256 decoding failed for ${fileName}`);
+  const cleanText = cleanExtractedText(extractedText);
+  
+  if (cleanText.length < 50) {
+    throw new Error('Advanced manual extraction found insufficient text');
   }
   
-  // Final fallback
-  text = new TextDecoder('utf-8', { fatal: false }).decode(uint8Array);
-  console.log(`🔄 Using UTF-8 fallback for ${fileName}, extracted ${text.length} characters`);
-  return cleanExtractedText(text);
+  return cleanText;
 }
 
-async function extractTextFromDOCX(arrayBuffer: ArrayBuffer, fileName: string): Promise<string> {
-  console.log(`📄 Processing DOCX file: ${fileName}`);
-  console.warn(`⚠️ Basic DOCX extraction - for production, recommend using proper DOCX parsing`);
+async function extractTextFromPDFBasic(arrayBuffer: ArrayBuffer): Promise<string> {
+  const uint8Array = new Uint8Array(arrayBuffer);
   
-  try {
-    const uint8Array = new Uint8Array(arrayBuffer);
-    let extractedText = '';
-    
-    // Convert to string to search for XML content
-    let docxContent = '';
-    for (let i = 0; i < Math.min(uint8Array.length, 300000); i++) {
-      docxContent += String.fromCharCode(uint8Array[i]);
-    }
-    
-    // Look for XML text elements
-    const xmlTextRegex = /<w:t[^>]*>(.*?)<\/w:t>/gs;
-    const textMatches = docxContent.match(xmlTextRegex);
-    
-    if (textMatches && textMatches.length > 0) {
-      console.log(`📖 Found ${textMatches.length} text elements in DOCX`);
+  // Try different encodings
+  const encodings = ['utf-8', 'latin1', 'windows-1256'];
+  
+  for (const encoding of encodings) {
+    try {
+      const text = new TextDecoder(encoding).decode(uint8Array);
       
-      extractedText = textMatches
-        .map(match => {
-          // Remove XML tags and decode entities
-          let text = match.replace(/<w:t[^>]*>|<\/w:t>/g, '');
-          text = text
-            .replace(/</g, '<')
-            .replace(/>/g, '>')
-            .replace(/&/g, '&')
-            .replace(/"/g, '"')
-            .replace(/&apos;/g, "'");
-          return text;
-        })
-        .join(' ');
-    }
-    
-    // Fallback: extract readable text
-    if (!extractedText || extractedText.length < 50) {
-      console.log(`🔄 Using fallback extraction for DOCX ${fileName}`);
+      // Extract readable text using simple pattern
+      let extractedText = text
+        .replace(/[^\x20-\x7E\u0600-\u06FF\u0750-\u077F\u00A0-\u00FF\n\r\t]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
       
-      let fallbackText = '';
-      for (let i = 0; i < Math.min(uint8Array.length, 100000); i++) {
-        const char = uint8Array[i];
-        if ((char >= 32 && char <= 126) || char === 10 || char === 13) {
-          fallbackText += String.fromCharCode(char);
+      // Look for common PDF keywords to validate extraction
+      const hasContent = /(?:stream|BT|ET|Tj|TJ|text|font|page)/i.test(extractedText);
+      
+      if (hasContent && extractedText.length > 100) {
+        const cleanText = cleanExtractedText(extractedText);
+        if (cleanText.length >= 50) {
+          return cleanText;
         }
       }
-      
-      // Filter out XML noise
-      extractedText = fallbackText
-        .split(/\s+/)
-        .filter(word => {
-          return word.length > 2 && 
-                 !word.includes('<') && 
-                 !word.includes('>') && 
-                 !word.includes('xml') &&
-                 !/^[0-9]+$/.test(word);
-        })
-        .join(' ');
+    } catch (error) {
+      continue;
     }
-    
-    const cleanedText = cleanExtractedText(extractedText);
-    console.log(`📊 DOCX extraction result: ${cleanedText.length} characters`);
-    
-    if (cleanedText.length < 30) {
-      throw new Error(`DOCX extraction yielded insufficient text (${cleanedText.length} chars). Please convert to TXT format for better results.`);
-    }
-    
-    return cleanedText;
-  } catch (error) {
-    console.error(`❌ DOCX extraction failed for ${fileName}:`, error);
-    throw new Error(`Failed to extract text from DOCX "${fileName}". Please convert to TXT format.`);
   }
+  
+  throw new Error('Basic extraction found no readable text');
 }
 
 function cleanExtractedText(text: string): string {
@@ -378,6 +226,9 @@ function cleanExtractedText(text: string): string {
   // Normalize whitespace but preserve line breaks for better readability
   cleaned = cleaned.replace(/[ \t]+/g, ' '); // Replace multiple spaces/tabs with single space
   cleaned = cleaned.replace(/\n\s*\n/g, '\n'); // Replace multiple newlines with single newline
+  
+  // Remove common PDF artifacts
+  cleaned = cleaned.replace(/(?:stream|endstream|BT|ET|Tf|Td|TD|Tm|TL|Tw|Tc|Ts|Tr|Tz)/g, ' ');
   
   // Remove lines that are mostly symbols or very short
   const lines = cleaned.split('\n');
@@ -397,32 +248,132 @@ function cleanExtractedText(text: string): string {
 
   const result = meaningfulLines.join('\n').trim();
   
-  console.log(`🧹 Text cleaning: ${text.length} → ${result.length} characters`);
+  // Limit length to prevent token overflow
+  const finalResult = result.substring(0, 80000);
   
-  return result;
+  console.log(`🧹 Text cleaning: ${text.length} → ${finalResult.length} characters`);
+  
+  return finalResult;
+}
+
+async function extractTextFromTXT(arrayBuffer: ArrayBuffer): Promise<string> {
+  console.log(`📄 Processing TXT file`);
+  
+  const uint8Array = new Uint8Array(arrayBuffer);
+  
+  // Try different encodings for better Arabic support
+  const encodings = ['utf-8', 'utf-16', 'windows-1256', 'iso-8859-6'];
+  
+  for (const encoding of encodings) {
+    try {
+      const text = new TextDecoder(encoding).decode(uint8Array);
+      
+      // Check if decoding was successful (no replacement characters)
+      if (text && !text.includes('�') && text.trim().length > 0) {
+        console.log(`✅ ${encoding} decoding successful`);
+        return text.trim().substring(0, 80000);
+      }
+    } catch (error) {
+      console.warn(`⚠️ ${encoding} decoding failed`);
+      continue;
+    }
+  }
+  
+  // Fallback to UTF-8 with error handling
+  console.log(`🔄 Using UTF-8 fallback`);
+  return new TextDecoder('utf-8', { fatal: false })
+    .decode(uint8Array)
+    .trim()
+    .substring(0, 80000);
+}
+
+async function extractTextFromDOCX(arrayBuffer: ArrayBuffer): Promise<string> {
+  console.log(`📄 Processing DOCX file`);
+  console.warn(`⚠️ Basic DOCX extraction - for production, recommend using proper DOCX parsing`);
+  
+  const uint8Array = new Uint8Array(arrayBuffer);
+  const text = new TextDecoder('utf-8').decode(uint8Array);
+  
+  let extractedText = '';
+  
+  // Extract text from XML structure with better patterns
+  const xmlPatterns = [
+    /<w:t[^>]*>(.*?)<\/w:t>/gs,
+    /<text[^>]*>(.*?)<\/text>/gs,
+    /<t[^>]*>(.*?)<\/t>/gs
+  ];
+  
+  for (const pattern of xmlPatterns) {
+    const matches = [...text.matchAll(pattern)];
+    if (matches.length > 0) {
+      extractedText = matches
+        .map(match => match[1])
+        .join(' ')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&amp;/g, '&')
+        .replace(/&quot;/g, '"')
+        .replace(/&apos;/g, "'");
+      break;
+    }
+  }
+  
+  // Fallback: extract readable text
+  if (!extractedText || extractedText.length < 50) {
+    console.log(`🔄 Using fallback extraction for DOCX`);
+    
+    let fallbackText = '';
+    for (let i = 0; i < Math.min(uint8Array.length, 100000); i++) {
+      const char = uint8Array[i];
+      if ((char >= 32 && char <= 126) || char === 10 || char === 13) {
+        fallbackText += String.fromCharCode(char);
+      }
+    }
+    
+    // Filter out XML noise
+    extractedText = fallbackText
+      .split(/\s+/)
+      .filter(word => {
+        return word.length > 2 && 
+               !word.includes('<') && 
+               !word.includes('>') && 
+               !word.includes('xml') &&
+               !/^[0-9]+$/.test(word);
+      })
+      .join(' ');
+  }
+  
+  const cleanText = extractedText.substring(0, 80000);
+  
+  if (!cleanText || cleanText.length < 20) {
+    throw new Error('لا يمكن استخراج نص كافٍ من ملف DOCX / Could not extract sufficient text from DOCX file');
+  }
+  
+  console.log(`📊 DOCX extraction result: ${cleanText.length} characters`);
+  return cleanText;
 }
 
 export function detectLanguage(text: string): 'ar' | 'en' {
   if (!text || text.trim().length === 0) return 'ar'; // Default to Arabic for Saudi context
   
-  const arabicChars = text.match(/[\u0600-\u06FF\u0750-\u077F]/g);
-  const englishChars = text.match(/[a-zA-Z]/g);
+  // Improved language detection
+  const arabicChars = (text.match(/[\u0600-\u06FF\u0750-\u077F]/g) || []).length;
+  const latinChars = (text.match(/[a-zA-Z]/g) || []).length;
+  const totalChars = arabicChars + latinChars;
   
-  const arabicCount = arabicChars ? arabicChars.length : 0;
-  const englishCount = englishChars ? englishChars.length : 0;
-  const totalChars = text.replace(/\s/g, '').length;
+  if (totalChars === 0) return 'ar'; // Default to Arabic if no detectable characters
   
-  const arabicRatio = totalChars > 0 ? arabicCount / totalChars : 0;
+  const arabicRatio = totalChars > 0 ? arabicChars / totalChars : 0;
   
-  console.log(`🌐 Language detection - Arabic: ${arabicCount}, English: ${englishCount}, Total: ${totalChars}, Arabic ratio: ${(arabicRatio * 100).toFixed(1)}%`);
+  console.log(`🌐 Language detection - Arabic: ${arabicChars}, English: ${latinChars}, Total: ${totalChars}, Arabic ratio: ${(arabicRatio * 100).toFixed(1)}%`);
   
-  // If more than 15% Arabic characters, consider it Arabic
-  if (arabicRatio > 0.15) {
+  // If more than 30% Arabic characters, consider it Arabic
+  if (arabicRatio > 0.3) {
     return 'ar';
   }
   
   // If we have English characters and very few Arabic, it's English
-  if (englishCount > 10 && arabicCount < 5) {
+  if (latinChars > 10 && arabicChars < 5) {
     return 'en';
   }
   
