@@ -1,6 +1,7 @@
 import { BaseAgent } from './BaseAgent';
 import { DocumentMetadata } from './types';
-import { extractTextFromFile, detectLanguage, fileToBase64, isVisualDocument } from '../utils/fileExtractor';
+import { extractTextFromFile, detectLanguage, isVisualDocument } from '../utils/fileExtractor';
+import { fileToBase64 } from '../utils/fileUtils';
 
 interface DocumentParserInput {
   file: File;
