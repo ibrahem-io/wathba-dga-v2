@@ -79,7 +79,7 @@ export default function CriteriaUploadBox({
       'image/jpeg',
       'image/jpg',
       'image/png',
-      'image/tiff',
+      'image/gif',
       'image/bmp',
       'image/webp'
     ];
@@ -141,60 +141,7 @@ export default function CriteriaUploadBox({
               };
             }
 
-            // STEP 2: For PDFs, try Vision API first if traditional extraction fails
-            if (file.type === 'application/pdf') {
-              setProcessingType('text');
-              setOcrProgress(language === 'ar' 
-                ? `محاولة استخراج النص من PDF: ${file.name}` 
-                : `Attempting text extraction from PDF: ${file.name}`);
-              
-              try {
-                // Try traditional text extraction first
-                const extractedText = await extractTextFromFile(file);
-                
-                // Check if we got meaningful text (not just whitespace or very short)
-                const meaningfulText = extractedText.replace(/\s+/g, ' ').trim();
-                const hasGoodContent = meaningfulText.length > 100 && 
-                  /[a-zA-Z\u0600-\u06FF]{20,}/.test(meaningfulText);
-                
-                if (hasGoodContent) {
-                  console.log('✅ Traditional PDF extraction successful');
-                  return {
-                    filename: file.name,
-                    text: extractedText,
-                    isFromVision: false
-                  };
-                } else {
-                  console.log('⚠️ Traditional PDF extraction yielded poor results, trying Vision API...');
-                  throw new Error('Poor text extraction quality');
-                }
-              } catch (textExtractionError) {
-                console.log('📷 PDF text extraction failed, attempting Vision API...');
-                
-                // If traditional extraction fails, try Vision API
-                setProcessingType('vision');
-                setOcrProgress(language === 'ar' 
-                  ? `PDF يحتوي على صور - استخدام الذكاء الاصطناعي لقراءة النص: ${file.name}` 
-                  : `PDF contains images - using AI Vision to read text: ${file.name}`);
-                
-                try {
-                  // Convert PDF to base64 and use Vision API
-                  const base64Image = await fileToBase64(file);
-                  const extractedText = await extractTextFromImageWithVision(base64Image, language);
-                  
-                  return {
-                    filename: file.name,
-                    text: extractedText,
-                    isFromVision: true
-                  };
-                } catch (visionError) {
-                  console.error('❌ Vision API also failed for PDF:', visionError);
-                  throw new Error(`فشل في استخراج النص من PDF "${file.name}" باستخدام كل من الطرق التقليدية والذكاء الاصطناعي. قد يكون الملف تالفاً أو لا يحتوي على نص قابل للقراءة.`);
-                }
-              }
-            }
-
-            // STEP 3: For other file types, use traditional extraction
+            // STEP 2: For non-image files, always try traditional extraction first
             setProcessingType('text');
             setOcrProgress(language === 'ar' 
               ? `استخراج النص من الملف: ${file.name}` 
@@ -202,11 +149,33 @@ export default function CriteriaUploadBox({
             
             const extractedText = await extractTextFromFile(file);
             
-            return {
-              filename: file.name,
-              text: extractedText,
-              isFromVision: false
-            };
+            // Check if we got meaningful text
+            const meaningfulText = extractedText.replace(/\s+/g, ' ').trim();
+            const hasGoodContent = meaningfulText.length > 100 && 
+              /[a-zA-Z\u0600-\u06FF]{20,}/.test(meaningfulText);
+            
+            if (hasGoodContent) {
+              console.log('✅ Traditional text extraction successful');
+              return {
+                filename: file.name,
+                text: extractedText,
+                isFromVision: false
+              };
+            } else {
+              // If traditional extraction yields poor results, inform user
+              console.log('⚠️ Traditional extraction yielded poor results');
+              
+              if (file.type === 'application/pdf') {
+                // For PDFs with poor text extraction, suggest they convert to image
+                throw new Error(language === 'ar' 
+                  ? `ملف PDF "${file.name}" لا يحتوي على نص قابل للقراءة أو قد يكون ممسوحاً ضوئياً. يرجى تحويل الملف إلى صورة (PNG أو JPG) لاستخدام تقنية قراءة النص من الصور.`
+                  : `PDF "${file.name}" contains no readable text or may be scanned. Please convert the file to an image (PNG or JPG) to use AI Vision text reading.`);
+              } else {
+                throw new Error(language === 'ar' 
+                  ? `فشل في استخراج نص كافٍ من الملف "${file.name}"`
+                  : `Failed to extract sufficient text from file "${file.name}"`);
+              }
+            }
 
           } catch (fileError) {
             console.error(`Error processing file ${file.name}:`, fileError);
@@ -268,7 +237,7 @@ export default function CriteriaUploadBox({
         }
       }
 
-      // STEP 4: Now send the extracted text to completion API
+      // STEP 3: Now send the extracted text to completion API
       setOcrProgress(language === 'ar' 
         ? 'تحليل المحتوى المستخرج باستخدام الذكاء الاصطناعي...' 
         : 'Analyzing extracted content with AI...');
@@ -300,6 +269,8 @@ export default function CriteriaUploadBox({
           errorMessage = language === 'ar' 
             ? 'خطأ في الاتصال بخدمة الذكاء الاصطناعي. يرجى التحقق من الاتصال بالإنترنت والمحاولة مرة أخرى.'
             : 'Error connecting to AI service. Please check your internet connection and try again.';
+        } else if (error.message.includes('ممسوحاً ضوئياً') || error.message.includes('scanned')) {
+          errorMessage = error.message;
         } else {
           errorMessage = error.message;
         }
@@ -420,13 +391,18 @@ export default function CriteriaUploadBox({
             <Eye className="w-4 h-4" />
             <span>
               {language === 'ar' 
-                ? 'يدعم قراءة النص من الصور والمستندات الممسوحة ضوئياً باستخدام الذكاء الاصطناعي'
-                : 'Supports reading text from images and scanned documents using AI Vision'}
+                ? 'يدعم قراءة النص من الصور باستخدام الذكاء الاصطناعي'
+                : 'Supports reading text from images using AI Vision'}
             </span>
+          </div>
+          <div className={`text-xs text-orange-600 mb-3 ${language === 'ar' ? 'text-right' : 'text-left'}`}>
+            {language === 'ar' 
+              ? '💡 نصيحة: للمستندات الممسوحة ضوئياً، قم بتحويلها إلى صور (PNG/JPG) للحصول على أفضل النتائج'
+              : '💡 Tip: For scanned documents, convert them to images (PNG/JPG) for best results'}
           </div>
           <input
             type="file"
-            accept=".pdf,.docx,.txt,.jpg,.jpeg,.png,.tiff,.bmp,.webp"
+            accept=".pdf,.docx,.txt,.jpg,.jpeg,.png,.gif,.bmp,.webp"
             onChange={handleFileInput}
             className="hidden"
             id={`file-upload-${criteriaId}`}
@@ -479,7 +455,7 @@ export default function CriteriaUploadBox({
           <div className="text-center pt-2">
             <input
               type="file"
-              accept=".pdf,.docx,.txt,.jpg,.jpeg,.png,.tiff,.bmp,.webp"
+              accept=".pdf,.docx,.txt,.jpg,.jpeg,.png,.gif,.bmp,.webp"
               onChange={handleFileInput}
               className="hidden"
               id={`file-upload-more-${criteriaId}`}
@@ -610,6 +586,40 @@ export default function CriteriaUploadBox({
           </p>
           
           {/* Helpful suggestions based on error type */}
+          {(error.includes('ممسوحاً ضوئياً') || error.includes('scanned') || error.includes('تحويل الملف إلى صورة')) && (
+            <div className="bg-blue-50 border border-blue-200 rounded p-3 mt-3">
+              <h4 className={`text-sm font-medium text-blue-800 mb-2 ${language === 'ar' ? 'text-right' : 'text-left'}`}>
+                {language === 'ar' ? 'حل مقترح للمستندات الممسوحة ضوئياً:' : 'Suggested solution for scanned documents:'}
+              </h4>
+              <ul className={`text-sm text-blue-700 space-y-1 ${language === 'ar' ? 'text-right' : 'text-left'}`}>
+                <li className={`flex items-start ${language === 'ar' ? 'flex-row-reverse' : ''}`}>
+                  <span className={`${language === 'ar' ? 'ml-2' : 'mr-2'} text-blue-600`}>1.</span>
+                  <span>
+                    {language === 'ar' 
+                      ? 'قم بتحويل PDF إلى صورة (PNG أو JPG) باستخدام أي برنامج تحويل'
+                      : 'Convert PDF to image (PNG or JPG) using any conversion tool'}
+                  </span>
+                </li>
+                <li className={`flex items-start ${language === 'ar' ? 'flex-row-reverse' : ''}`}>
+                  <span className={`${language === 'ar' ? 'ml-2' : 'mr-2'} text-blue-600`}>2.</span>
+                  <span>
+                    {language === 'ar' 
+                      ? 'ارفع الصورة هنا وسيتم قراءة النص تلقائياً بالذكاء الاصطناعي'
+                      : 'Upload the image here and text will be automatically read with AI'}
+                  </span>
+                </li>
+                <li className={`flex items-start ${language === 'ar' ? 'flex-row-reverse' : ''}`}>
+                  <span className={`${language === 'ar' ? 'ml-2' : 'mr-2'} text-blue-600`}>3.</span>
+                  <span>
+                    {language === 'ar' 
+                      ? 'تأكد من وضوح النص في الصورة للحصول على أفضل النتائج'
+                      : 'Ensure text clarity in the image for best results'}
+                  </span>
+                </li>
+              </ul>
+            </div>
+          )}
+          
           {(error.includes('Vision') || error.includes('الذكاء الاصطناعي')) && (
             <div className="bg-purple-50 border border-purple-200 rounded p-3 mt-3">
               <h4 className={`text-sm font-medium text-purple-800 mb-2 ${language === 'ar' ? 'text-right' : 'text-left'}`}>
