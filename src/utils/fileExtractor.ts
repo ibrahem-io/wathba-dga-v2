@@ -1,243 +1,339 @@
-// PDF to image conversion and OpenAI Vision API extraction
+import { fileToBase64 } from './fileUtils';
 
-export async function extractTextFromFile(file: File, language: 'ar' | 'en' = 'ar'): Promise<string> {
-  console.log(`📤 Processing ${file.name} for OpenAI Vision API...`);
+export async function extractTextFromFile(file: File): Promise<string> {
+  console.log(`🔍 Starting extraction for: ${file.name}`);
+  console.log(`📁 File type: ${file.type}`);
+  console.log(`📊 File size: ${(file.size / 1024).toFixed(2)} KB`);
   
   try {
-    let base64: string;
-    let mimeType: string;
+    // Check if this is an image file - handle gracefully
+    if (isVisualDocument(file)) {
+      throw new Error(`Image file detected: "${file.name}". This system currently processes text documents only. Please upload PDF, DOCX, or TXT files for text analysis.`);
+    }
     
-    // Check if file is PDF
-    if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
-      console.log(`📄 Converting PDF ${file.name} to image...`);
-      const pdfImageData = await convertPdfToImage(file);
-      base64 = pdfImageData.base64;
-      mimeType = pdfImageData.mimeType;
+    // For text-based documents, use traditional text extraction
+    if (file.type === 'application/pdf') {
+      return await extractTextFromPDFRobust(file);
+    } else if (file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+      return await extractTextFromDOCXRobust(file);
+    } else if (file.type === 'text/plain') {
+      return await extractTextFromTXTRobust(file);
     } else {
-      // For image files, convert directly to base64
-      base64 = await fileToBase64(file);
-      mimeType = file.type || 'image/jpeg';
+      throw new Error(`Unsupported file type: ${file.type}. Please upload PDF, DOCX, or TXT files.`);
     }
-    
-    // Use OpenAI Vision API with the converted image
-    const extractedText = await extractTextWithOpenAIVision(base64, file.name, mimeType, language);
-    
-    console.log(`✅ Successfully extracted ${extractedText.length} characters from ${file.name}`);
-    return extractedText;
-    
   } catch (error) {
-    console.error(`❌ Error processing ${file.name}:`, error);
-    
-    if (error instanceof Error) {
-      // Check for specific API errors
-      if (error.message.includes('rate limit')) {
-        throw new Error(language === 'ar'
-          ? 'تم تجاوز الحد المسموح لاستخدام خدمة الذكاء الاصطناعي. يرجى المحاولة لاحقاً.'
-          : 'AI service rate limit exceeded. Please try again later.');
-      } else if (error.message.includes('invalid_request_error')) {
-        throw new Error(language === 'ar'
-          ? 'خطأ في معالجة الملف. قد يكون الملف كبيراً جداً أو بصيغة غير مدعومة.'
-          : 'Error processing file. The file may be too large or in an unsupported format.');
-      }
-    }
-    
-    throw new Error(language === 'ar'
-      ? `فشل في معالجة الملف "${file.name}". يرجى التحقق من صحة الملف والمحاولة مرة أخرى.`
-      : `Failed to process file "${file.name}". Please check the file and try again.`);
-  }
-}
-
-async function convertPdfToImage(file: File): Promise<{ base64: string; mimeType: string }> {
-  // Import PDF.js dynamically
-  const pdfjsLib = await import('pdfjs-dist');
-  
-  // Set worker path
-  pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.js';
-  
-  try {
-    // Convert file to array buffer
-    const arrayBuffer = await file.arrayBuffer();
-    
-    // Load PDF document
-    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-    
-    // Get first page
-    const page = await pdf.getPage(1);
-    
-    // Create canvas
-    const canvas = document.createElement('canvas');
-    const context = canvas.getContext('2d');
-    
-    if (!context) {
-      throw new Error('Failed to get canvas context');
-    }
-    
-    // Set up viewport with high resolution for better text recognition
-    const viewport = page.getViewport({ scale: 2.0 });
-    canvas.height = viewport.height;
-    canvas.width = viewport.width;
-    
-    // Render page to canvas
-    const renderContext = {
-      canvasContext: context,
-      viewport: viewport
-    };
-    
-    await page.render(renderContext).promise;
-    
-    // Convert canvas to base64 PNG
-    const dataUrl = canvas.toDataURL('image/png', 0.95);
-    const base64 = dataUrl.split(',')[1];
-    
-    if (!base64) {
-      throw new Error('Failed to convert PDF page to base64');
-    }
-    
-    console.log(`✅ Successfully converted PDF page to image (${base64.length} characters)`);
-    
-    return {
-      base64,
-      mimeType: 'image/png'
-    };
-    
-  } catch (error) {
-    console.error('PDF conversion error:', error);
-    throw new Error('Failed to convert PDF to image for processing');
-  }
-}
-
-async function extractTextWithOpenAIVision(
-  base64: string, 
-  fileName: string, 
-  mimeType: string,
-  language: 'ar' | 'en' = 'ar'
-): Promise<string> {
-  // Import OpenAI dynamically
-  const OpenAI = (await import('openai')).default;
-  
-  // Get API key from environment variable
-  const apiKey = import.meta.env.VITE_OPENAI_API_KEY;
-  if (!apiKey) {
-    throw new Error(language === 'ar'
-      ? 'مفتاح OpenAI API غير موجود. يرجى إضافة VITE_OPENAI_API_KEY إلى ملف .env'
-      : 'OpenAI API key not found. Please add VITE_OPENAI_API_KEY to your .env file');
-  }
-  
-  const openai = new OpenAI({
-    apiKey: apiKey,
-    dangerouslyAllowBrowser: true
-  });
-  
-  try {
-    // Ensure we have a valid image MIME type
-    const validMimeType = mimeType.startsWith('image/') ? mimeType : 'image/png';
-    
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o", // Using gpt-4o for vision capabilities
-      messages: [
-        {
-          role: "user",
-          content: [
-            {
-              type: "text",
-              text: language === 'ar' 
-                ? `استخرج كل النص من هذا المستند "${fileName}". قد يكون النص بالعربية أو الإنجليزية. يرجى:
-1. استخراج كل النص المرئي بدقة
-2. الحفاظ على بنية النص والتنسيق قدر الإمكان
-3. إذا كانت هناك جداول، حافظ على بنيتها
-4. إذا كانت هناك عناوين أو نقاط أو قوائم مرقمة، احتفظ بها
-5. إذا كان النص بالعربية، تأكد من ترتيب القراءة الصحيح من اليمين إلى اليسار
-6. أعد النص المستخرج فقط، بدون تعليقات
-
-ركز بشكل خاص على المحتوى المتعلق بـ:
-- التحول الرقمي
-- الثقافة الرقمية
-- البرامج التدريبية
-- الأدوات التقنية
-- المعايير الحكومية`
-                : `Extract all text from this document "${fileName}". The text may be in Arabic or English. Please:
-1. Extract ALL visible text accurately
-2. Preserve the text structure and formatting as much as possible
-3. If there are tables, maintain their structure
-4. If there are headers, bullet points, or numbered lists, preserve them
-5. If text is in Arabic, ensure proper RTL reading order
-6. Return only the extracted text, no commentary
-
-Focus especially on content related to:
-- Digital transformation
-- Digital culture
-- Training programs
-- Technical tools
-- Government standards`
-            },
-            {
-              type: "image_url",
-              image_url: {
-                url: `data:${validMimeType};base64,${base64}`,
-                detail: "high" // High detail for better text recognition
-              }
-            }
-          ]
-        }
-      ],
-      max_tokens: 4000,
-      temperature: 0.1 // Low temperature for accurate text extraction
-    });
-    
-    const extractedText = response.choices[0].message.content || '';
-    
-    // Clean up the extracted text
-    const cleanText = extractedText
-      .replace(/^(Here's the extracted text:|The extracted text is:|Text from the image:)/i, '')
-      .replace(/\n{3,}/g, '\n\n') // Reduce multiple newlines
-      .trim();
-    
-    if (!cleanText || cleanText.length < 10) {
-      throw new Error(language === 'ar'
-        ? 'لم يتم العثور على نص في المستند'
-        : 'No text found in the document');
-    }
-    
-    // Limit to 10,000 characters to prevent token overflow
-    return cleanText.substring(0, 10000);
-    
-  } catch (error) {
-    console.error('OpenAI Vision API error:', error);
+    console.error(`❌ Error extracting text from ${file.name}:`, error);
     throw error;
   }
 }
 
-async function fileToBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    
-    reader.onload = () => {
-      const result = reader.result as string;
-      // Remove data URL prefix to get just the base64 string
-      const base64 = result.split(',')[1];
-      if (!base64) {
-        reject(new Error('Failed to convert file to base64'));
-        return;
-      }
-      resolve(base64);
-    };
-    
-    reader.onerror = () => reject(new Error('Failed to read file'));
-    reader.readAsDataURL(file);
-  });
-}
-
 export function detectLanguage(text: string): 'ar' | 'en' {
+  if (!text || text.trim().length === 0) return 'ar'; // Default to Arabic for Saudi context
+  
   const arabicChars = text.match(/[\u0600-\u06FF\u0750-\u077F]/g);
+  const englishChars = text.match(/[a-zA-Z]/g);
+  
+  const arabicCount = arabicChars ? arabicChars.length : 0;
+  const englishCount = englishChars ? englishChars.length : 0;
   const totalChars = text.replace(/\s/g, '').length;
   
-  if (arabicChars && arabicChars.length > totalChars * 0.3) {
+  const arabicRatio = totalChars > 0 ? arabicCount / totalChars : 0;
+  
+  console.log(`🌐 Language detection - Arabic: ${arabicCount}, English: ${englishCount}, Total: ${totalChars}, Arabic ratio: ${(arabicRatio * 100).toFixed(1)}%`);
+  
+  // If more than 15% Arabic characters, consider it Arabic
+  if (arabicRatio > 0.15) {
     return 'ar';
   }
-  return 'en';
+  
+  // If we have English characters and very few Arabic, it's English
+  if (englishCount > 10 && arabicCount < 5) {
+    return 'en';
+  }
+  
+  // Default to Arabic for Saudi government context
+  return 'ar';
 }
 
 export function isVisualDocument(file: File): boolean {
-  // Since we're using Vision API for everything, all documents are considered visual
-  return true;
+  const imageTypes = [
+    'image/jpeg',
+    'image/jpg', 
+    'image/png',
+    'image/gif',
+    'image/bmp',
+    'image/webp',
+    'image/svg+xml',
+    'image/tiff'
+  ];
+  
+  return imageTypes.includes(file.type.toLowerCase());
+}
+
+async function extractTextFromPDFRobust(file: File): Promise<string> {
+  console.log(`🔍 Starting robust PDF extraction for: ${file.name}`);
+  
+  // Strategy 1: Try direct text extraction using FileReader with text
+  try {
+    console.log('📄 Attempting direct text extraction...');
+    const directText = await extractPDFAsText(file);
+    
+    // Check if we got meaningful text
+    const meaningfulText = directText.replace(/\s+/g, ' ').trim();
+    const hasReadableContent = meaningfulText.length > 100 && 
+      /[a-zA-Z\u0600-\u06FF]{10,}/.test(meaningfulText);
+    
+    if (hasReadableContent) {
+      console.log('✅ Direct text extraction successful');
+      return meaningfulText.substring(0, 10000);
+    }
+  } catch (error) {
+    console.log('❌ Direct text extraction failed:', error);
+  }
+
+  // Strategy 2: Try reading as binary and extracting readable text
+  try {
+    console.log('🔧 Attempting binary text extraction...');
+    const binaryText = await extractPDFAsBinary(file);
+    
+    if (binaryText && binaryText.length > 50) {
+      console.log('✅ Binary extraction successful');
+      return binaryText;
+    }
+  } catch (error) {
+    console.log('❌ Binary extraction failed:', error);
+  }
+
+  // If all text extraction strategies fail, this might be a scanned PDF or image-based PDF
+  throw new Error(`Failed to extract text from PDF "${file.name}". This may be a scanned document or image-based PDF. Please try uploading a text-based PDF or convert to a different format.`);
+}
+
+async function extractPDFAsText(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    
+    reader.onload = (event) => {
+      try {
+        const text = event.target?.result as string;
+        
+        if (!text || text.length < 10) {
+          throw new Error('No text content found');
+        }
+
+        // Extract readable text using regex patterns
+        let extractedText = '';
+        
+        // Look for text between common PDF text markers
+        const textPatterns = [
+          /BT\s*(.*?)\s*ET/gs,           // Text objects
+          /\((.*?)\)\s*Tj/g,            // Text showing operators
+          /\[(.*?)\]\s*TJ/g,            // Text array operators
+          /\/F\d+\s+\d+\s+Tf\s*(.*?)(?=BT|ET|$)/gs  // Font and text
+        ];
+
+        for (const pattern of textPatterns) {
+          const matches = text.match(pattern);
+          if (matches) {
+            extractedText += matches.map(match => 
+              match.replace(/[()[\]]/g, ' ')
+                   .replace(/\s+/g, ' ')
+                   .trim()
+            ).join(' ') + ' ';
+          }
+        }
+
+        // Clean up the extracted text
+        extractedText = extractedText
+          .replace(/[^\x20-\x7E\u0600-\u06FF\u0750-\u077F]/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+
+        if (extractedText.length < 50) {
+          throw new Error('Insufficient text extracted');
+        }
+
+        resolve(extractedText);
+      } catch (error) {
+        reject(error);
+      }
+    };
+    
+    reader.onerror = () => reject(new Error('Failed to read PDF as text'));
+    reader.readAsText(file, 'utf-8');
+  });
+}
+
+async function extractPDFAsBinary(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    
+    reader.onload = (event) => {
+      try {
+        const binaryString = event.target?.result as string;
+        
+        if (!binaryString || binaryString.length < 100) {
+          throw new Error('No binary content found');
+        }
+
+        // Extract readable text from binary content
+        let extractedText = '';
+        
+        // Look for readable text patterns in binary data
+        const readableTextRegex = /[\x20-\x7E\u0600-\u06FF\u0750-\u077F]{4,}/g;
+        const matches = binaryString.match(readableTextRegex);
+        
+        if (matches) {
+          extractedText = matches
+            .filter(match => match.length > 5)
+            .join(' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+        }
+
+        if (extractedText.length < 50) {
+          throw new Error('Insufficient readable text found in binary');
+        }
+
+        resolve(extractedText.substring(0, 10000));
+      } catch (error) {
+        reject(error);
+      }
+    };
+    
+    reader.onerror = () => reject(new Error('Failed to read PDF as binary'));
+    reader.readAsBinaryString(file);
+  });
+}
+
+async function extractTextFromDOCXRobust(file: File): Promise<string> {
+  console.log(`🔍 Starting robust DOCX extraction for: ${file.name}`);
+  
+  // Strategy 1: Try reading as text to extract XML content
+  try {
+    console.log('📄 Attempting DOCX text extraction...');
+    const textContent = await readFileAsText(file);
+    
+    // Extract text from XML structure
+    const xmlMatches = textContent.match(/<w:t[^>]*>(.*?)<\/w:t>/gs);
+    if (xmlMatches && xmlMatches.length > 0) {
+      const extractedText = xmlMatches
+        .map(match => match.replace(/<w:t[^>]*>|<\/w:t>/g, ''))
+        .join(' ')
+        .replace(/</g, '<')
+        .replace(/>/g, '>')
+        .replace(/&/g, '&')
+        .replace(/\s+/g, ' ')
+        .trim();
+      
+      if (extractedText.length > 50) {
+        console.log('✅ DOCX extraction successful');
+        return extractedText.substring(0, 10000);
+      }
+    }
+  } catch (error) {
+    console.log('❌ DOCX text extraction failed:', error);
+  }
+
+  // Strategy 2: Try binary extraction
+  try {
+    console.log('🔧 Attempting DOCX binary extraction...');
+    const binaryText = await readFileAsBinary(file);
+    
+    // Look for readable text in binary content
+    const readableText = binaryText
+      .replace(/[^\x20-\x7E\u0600-\u06FF\u0750-\u077F]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    
+    if (readableText.length > 50) {
+      console.log('✅ DOCX binary extraction successful');
+      return readableText.substring(0, 10000);
+    }
+  } catch (error) {
+    console.log('❌ DOCX binary extraction failed:', error);
+  }
+
+  throw new Error(`Failed to extract text from DOCX "${file.name}". The file may be corrupted, password-protected, or contain primarily images.`);
+}
+
+async function extractTextFromTXTRobust(file: File): Promise<string> {
+  console.log(`🔍 Starting robust TXT extraction for: ${file.name}`);
+  
+  // Strategy 1: Try UTF-8 encoding
+  try {
+    console.log('📄 Attempting UTF-8 extraction...');
+    const text = await readFileAsText(file, 'utf-8');
+    
+    if (text && text.length > 10 && !text.includes('�')) {
+      console.log('✅ UTF-8 extraction successful');
+      return text.trim().substring(0, 10000);
+    }
+  } catch (error) {
+    console.log('❌ UTF-8 extraction failed:', error);
+  }
+
+  // Strategy 2: Try UTF-16 for Arabic text
+  try {
+    console.log('📄 Attempting UTF-16 extraction...');
+    const text = await readFileAsText(file, 'utf-16');
+    
+    if (text && text.length > 10 && !text.includes('�')) {
+      console.log('✅ UTF-16 extraction successful');
+      return text.trim().substring(0, 10000);
+    }
+  } catch (error) {
+    console.log('❌ UTF-16 extraction failed:', error);
+  }
+
+  // Strategy 3: Try Windows-1256 for Arabic text
+  try {
+    console.log('📄 Attempting Windows-1256 extraction...');
+    const text = await readFileAsText(file, 'windows-1256');
+    
+    if (text && text.length > 10) {
+      console.log('✅ Windows-1256 extraction successful');
+      return text.trim().substring(0, 10000);
+    }
+  } catch (error) {
+    console.log('❌ Windows-1256 extraction failed:', error);
+  }
+
+  throw new Error(`Failed to extract text from TXT "${file.name}". The file may be using an unsupported encoding.`);
+}
+
+// Helper functions that avoid ArrayBuffer entirely
+async function readFileAsText(file: File, encoding: string = 'utf-8'): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    
+    reader.onload = (event) => {
+      const text = event.target?.result as string;
+      if (!text) {
+        reject(new Error('No text content'));
+        return;
+      }
+      resolve(text);
+    };
+    
+    reader.onerror = () => reject(new Error(`Failed to read file as ${encoding}`));
+    reader.readAsText(file, encoding);
+  });
+}
+
+async function readFileAsBinary(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    
+    reader.onload = (event) => {
+      const binaryString = event.target?.result as string;
+      if (!binaryString) {
+        reject(new Error('No binary content'));
+        return;
+      }
+      resolve(binaryString);
+    };
+    
+    reader.onerror = () => reject(new Error('Failed to read file as binary'));
+    reader.readAsBinaryString(file);
+  });
 }

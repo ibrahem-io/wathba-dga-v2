@@ -1,6 +1,6 @@
 import { BaseAgent } from './BaseAgent';
 import { DocumentMetadata } from './types';
-import { extractTextFromFile, detectLanguage } from '../utils/fileExtractor';
+import { extractTextFromFile, detectLanguage, isVisualDocument } from '../utils/fileExtractor';
 
 interface DocumentParserInput {
   file: File;
@@ -15,33 +15,35 @@ export class DocumentParserAgent extends BaseAgent {
     const { file } = input;
 
     try {
-      console.log(`🔍 Starting Vision API processing for: ${file.name} (${file.type}, ${this.formatFileSize(file.size)})`);
+      console.log(`🔍 Starting document parsing for: ${file.name} (${file.type}, ${this.formatFileSize(file.size)})`);
 
-      // Use Vision API for ALL file types - no local processing
-      console.log(`🤖 Processing ${file.name} with OpenAI Vision API...`);
-      
+      // Check if this is an image file and handle gracefully
+      if (isVisualDocument(file)) {
+        throw new Error(`Image file detected: "${file.name}". This system currently processes text documents only. Please upload PDF, DOCX, or TXT files for text analysis.`);
+      }
+
       let extractedText = '';
-      let confidence = 90;
-      let language: 'ar' | 'en' = 'ar'; // Default to Arabic for Saudi context
+      let confidence = 70;
+      let language: 'ar' | 'en' = 'ar';
 
       try {
-        // Extract text using Vision API for ALL file types
-        extractedText = await extractTextFromFile(file, language);
+        console.log(`📄 Extracting text from document...`);
+        extractedText = await extractTextFromFile(file);
         
         if (extractedText && extractedText.trim().length > 0) {
-          console.log(`✅ Vision API extraction successful: ${extractedText.length} characters`);
+          console.log(`✅ Text extraction successful: ${extractedText.length} characters`);
           
-          // Detect language from extracted text
+          // Detect language and calculate metrics
           language = detectLanguage(extractedText);
-          confidence = this.calculateVisionExtractionConfidence(extractedText, file);
+          confidence = this.calculateExtractionConfidence(extractedText, file, language);
           
           console.log(`🌐 Language detected: ${language}`);
           console.log(`📊 Extraction confidence: ${confidence}%`);
         } else {
-          throw new Error(`No text could be extracted from "${file.name}". The file may be empty, corrupted, or contain only images without readable text.`);
+          throw new Error(`No readable text content found in "${file.name}". The document may be empty, corrupted, or a scanned document.`);
         }
       } catch (error) {
-        console.error(`❌ Vision API processing failed for ${file.name}:`, error);
+        console.error(`❌ Text extraction failed for ${file.name}:`, error);
         throw error;
       }
 
@@ -56,12 +58,12 @@ export class DocumentParserAgent extends BaseAgent {
         extractedText: extractedText.substring(0, 50000), // Limit text size
         wordCount,
         confidence,
-        base64Image: undefined, // Not needed since we're using Vision API directly
-        isVisualDocument: true // All documents are processed as visual with Vision API
+        base64Image: undefined,
+        isVisualDocument: false // Text-based processing
       };
 
-      console.log(`✅ Document processed successfully with Vision API: ${file.name}
-        - Type: ${file.type}
+      console.log(`✅ Document parsed successfully: ${file.name}
+        - Type: Text-based
         - Language: ${language}
         - Words: ${wordCount}
         - Confidence: ${confidence}%
@@ -70,49 +72,29 @@ export class DocumentParserAgent extends BaseAgent {
       return metadata;
 
     } catch (error) {
-      console.error(`❌ Vision API processing failed for ${file.name}:`, error);
+      console.error(`❌ Document parsing failed for ${file.name}:`, error);
       
       // Provide specific error messages
-      let errorMessage = 'Failed to process document with Vision API';
+      let errorMessage = 'Failed to parse document';
       
       if (error instanceof Error) {
-        if (error.message.includes('unsupported image') || error.message.includes('invalid_image_format')) {
-          errorMessage = `File format not supported by Vision API. Please convert "${file.name}" to a supported image format (PNG, JPEG, GIF, WebP) and try again.`;
-        } else if (error.message.includes('rate limit')) {
-          errorMessage = `AI service rate limit exceeded. Please wait a moment and try again.`;
-        } else if (error.message.includes('API key')) {
-          errorMessage = `OpenAI API key is invalid or missing. Please check your configuration.`;
-        } else if (error.message.includes('No text could be extracted')) {
+        if (error.message.includes('Image file detected')) {
           errorMessage = error.message;
+        } else if (error.message.includes('scanned document') || error.message.includes('image-based PDF')) {
+          errorMessage = `Document "${file.name}" appears to be a scanned or image-based file. Please upload a text-based document or convert to a different format.`;
+        } else if (error.message.includes('No readable text')) {
+          errorMessage = `Document "${file.name}" appears to be empty or corrupted. Please check the file and try again.`;
+        } else if (error.message.includes('Unsupported file type')) {
+          errorMessage = `Unsupported file format: ${file.type}. Please upload PDF, DOCX, or TXT files.`;
+        } else if (error.message.includes('password-protected')) {
+          errorMessage = `Document "${file.name}" may be password-protected. Please upload an unprotected document.`;
         } else {
-          errorMessage = `Vision API processing failed for "${file.name}": ${error.message}`;
+          errorMessage = error.message;
         }
       }
       
       throw new Error(errorMessage);
     }
-  }
-
-  private calculateVisionExtractionConfidence(text: string, file: File): number {
-    let confidence = 85; // Base confidence for Vision API
-
-    // Text length bonuses
-    if (text.length > 500) confidence += 5;
-    if (text.length > 2000) confidence += 5;
-    if (text.length > 5000) confidence += 5;
-
-    // Text structure bonuses
-    const structureBonus = this.assessTextStructure(text);
-    confidence += structureBonus;
-
-    // Penalize very short content
-    if (text.length < 100) {
-      confidence -= 10;
-    } else if (text.length < 300) {
-      confidence -= 5;
-    }
-
-    return Math.min(95, Math.max(70, confidence));
   }
 
   private calculateWordCount(text: string, language: 'ar' | 'en'): number {
@@ -143,24 +125,102 @@ export class DocumentParserAgent extends BaseAgent {
     }
   }
 
+  private calculateExtractionConfidence(text: string, file: File, language: 'ar' | 'en'): number {
+    let confidence = 70; // Base confidence
+
+    // File type bonuses
+    const fileTypeBonus = this.getFileTypeBonus(file.type);
+    confidence += fileTypeBonus;
+
+    // Text length bonuses
+    if (text.length > 500) confidence += 5;
+    if (text.length > 2000) confidence += 10;
+    if (text.length > 5000) confidence += 10;
+
+    // Language-specific content quality
+    const languageQuality = this.assessLanguageQuality(text, language);
+    confidence += languageQuality;
+
+    // Text structure bonuses
+    const structureBonus = this.assessTextStructure(text);
+    confidence += structureBonus;
+
+    // Penalize very short content
+    if (text.length < 100) {
+      confidence -= 15;
+    } else if (text.length < 300) {
+      confidence -= 5;
+    }
+
+    return Math.min(95, Math.max(30, confidence));
+  }
+
+  private getFileTypeBonus(fileType: string): number {
+    const bonuses: Record<string, number> = {
+      'text/plain': 15,
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 10,
+      'application/pdf': 5
+    };
+
+    return bonuses[fileType] || 0;
+  }
+
+  private assessLanguageQuality(text: string, language: 'ar' | 'en'): number {
+    let quality = 0;
+
+    if (language === 'ar') {
+      const arabicChars = (text.match(/[\u0600-\u06FF]/g) || []).length;
+      const totalChars = text.replace(/\s/g, '').length;
+      
+      if (totalChars > 0) {
+        const arabicRatio = arabicChars / totalChars;
+        quality += arabicRatio * 15;
+      }
+
+      const arabicWords = (text.match(/[\u0600-\u06FF]{3,}/g) || []).length;
+      if (arabicWords > 10) quality += 5;
+      if (arabicWords > 50) quality += 5;
+
+    } else {
+      const englishChars = (text.match(/[a-zA-Z]/g) || []).length;
+      const totalChars = text.replace(/\s/g, '').length;
+      
+      if (totalChars > 0) {
+        const englishRatio = englishChars / totalChars;
+        quality += englishRatio * 15;
+      }
+
+      const englishWords = (text.match(/[a-zA-Z]{3,}/g) || []).length;
+      if (englishWords > 10) quality += 5;
+      if (englishWords > 50) quality += 5;
+    }
+
+    return Math.min(quality, 15);
+  }
+
   private assessTextStructure(text: string): number {
     let structureBonus = 0;
 
     // Check for paragraph structure
     const paragraphs = text.split('\n').filter(p => p.trim().length > 0);
-    if (paragraphs.length > 1) structureBonus += 2;
-    if (paragraphs.length > 5) structureBonus += 1;
+    if (paragraphs.length > 1) structureBonus += 3;
+    if (paragraphs.length > 5) structureBonus += 2;
 
     // Check for sentence structure
     const sentences = text.split(/[.!?؟]/).filter(s => s.trim().length > 10);
-    if (sentences.length > 3) structureBonus += 2;
-    if (sentences.length > 10) structureBonus += 1;
+    if (sentences.length > 3) structureBonus += 3;
+    if (sentences.length > 10) structureBonus += 2;
 
     // Check for proper punctuation
     const punctuationMarks = (text.match(/[.!?؟،,;:]/g) || []).length;
-    if (punctuationMarks > 5) structureBonus += 1;
+    if (punctuationMarks > 5) structureBonus += 2;
 
-    return Math.min(structureBonus, 5);
+    // Check for numbers
+    const numbers = (text.match(/\d+/g) || []).length;
+    if (numbers > 0) structureBonus += 1;
+    if (numbers > 10) structureBonus += 1;
+
+    return Math.min(structureBonus, 10);
   }
 
   private formatFileSize(bytes: number): string {

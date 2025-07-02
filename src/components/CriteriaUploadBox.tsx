@@ -1,7 +1,8 @@
 import React, { useState, useCallback } from 'react';
-import { Upload, File, X, AlertCircle, CheckCircle, XCircle, Brain, Loader, Eye } from 'lucide-react';
+import { Upload, File, X, AlertCircle, CheckCircle, XCircle, Brain, Loader, FileText, Image } from 'lucide-react';
 import { analyzeDocumentForCriteria } from '../services/openaiService';
 import { langchainService } from '../services/langchainService';
+import { isVisualDocument } from '../utils/fileExtractor';
 
 interface CriteriaAnalysis {
   score: number;
@@ -36,7 +37,7 @@ export default function CriteriaUploadBox({
   const [analysis, setAnalysis] = useState<CriteriaAnalysis | null>(null);
   const [error, setError] = useState<string>('');
   const [dragActive, setDragActive] = useState(false);
-  const [visionProgress, setVisionProgress] = useState<string>('');
+  const [processingProgress, setProcessingProgress] = useState<string>('');
 
   const handleDrag = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -70,12 +71,33 @@ export default function CriteriaUploadBox({
 
   const handleFiles = async (files: File[]) => {
     const maxSize = 10 * 1024 * 1024; // 10MB
+    const allowedTypes = [
+      'application/pdf', 
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'text/plain'
+    ];
 
     const validFiles = files.filter(file => {
+      // Check for image files and provide helpful message
+      if (isVisualDocument(file)) {
+        setError(language === 'ar' 
+          ? `الملف "${file.name}" هو صورة. هذا النظام يعالج الوثائق النصية فقط. يرجى رفع ملفات PDF أو DOCX أو TXT.`
+          : `File "${file.name}" is an image. This system processes text documents only. Please upload PDF, DOCX, or TXT files.`);
+        return false;
+      }
+
       if (file.size > maxSize) {
         setError(language === 'ar' ? 'حجم الملف يجب أن يكون أقل من 10 ميجابايت' : 'File size must be less than 10MB');
         return false;
       }
+      
+      if (!allowedTypes.includes(file.type)) {
+        setError(language === 'ar' 
+          ? `نوع الملف "${file.name}" غير مدعوم. يرجى رفع ملفات PDF أو DOCX أو TXT فقط.`
+          : `File type "${file.name}" not supported. Please upload PDF, DOCX, or TXT files only.`);
+        return false;
+      }
+      
       return true;
     });
 
@@ -90,48 +112,52 @@ export default function CriteriaUploadBox({
 
     setIsAnalyzing(true);
     setError('');
-    setVisionProgress('');
+    setProcessingProgress('');
 
     try {
       // Show initial progress
-      setVisionProgress(language === 'ar' ? 'بدء معالجة الملفات بالذكاء الاصطناعي...' : 'Starting AI Vision processing...');
+      setProcessingProgress(language === 'ar' ? 'بدء معالجة الملفات...' : 'Starting file processing...');
 
-      // Process files using Vision API for ALL file types
+      // Process files and extract text using text-first approach
       const extractedTexts = await Promise.all(
         files.map(async (file, index) => {
           try {
             // Update progress for each file
-            setVisionProgress(language === 'ar' 
-              ? `معالجة الملف ${index + 1} من ${files.length} بالذكاء الاصطناعي: ${file.name}` 
-              : `AI Vision processing file ${index + 1} of ${files.length}: ${file.name}`);
+            setProcessingProgress(language === 'ar' 
+              ? `معالجة الملف ${index + 1} من ${files.length}: ${file.name}` 
+              : `Processing file ${index + 1} of ${files.length}: ${file.name}`);
 
-            console.log(`🤖 Processing file with Vision API: ${file.name}`);
+            console.log(`📄 Processing text document: ${file.name}`);
 
-            // Use the agent system which now uses Vision API for everything
+            // Use the agent system for text extraction
             const result = await langchainService.analyzeCriteria(file, 'document_extraction', language);
             
             if (result && result.documentContent) {
               return {
                 filename: file.name,
                 text: result.documentContent,
-                isFromVision: true
+                isFromText: true
               };
             } else {
-              throw new Error('No text extracted from Vision API');
+              throw new Error('No text extracted from document');
             }
 
           } catch (fileError) {
             console.error(`Error processing file ${file.name}:`, fileError);
             
             if (fileError instanceof Error) {
-              if (fileError.message.includes('unsupported image') || fileError.message.includes('invalid_image_format')) {
+              if (fileError.message.includes('Image file detected')) {
                 throw new Error(language === 'ar' 
-                  ? `تنسيق الملف "${file.name}" غير مدعوم من قبل الذكاء الاصطناعي. يرجى تحويل الملف إلى PNG أو JPEG أو GIF أو WebP والمحاولة مرة أخرى.`
-                  : `File format "${file.name}" not supported by AI Vision. Please convert to PNG, JPEG, GIF, or WebP and try again.`);
-              } else if (fileError.message.includes('rate limit')) {
-                throw new Error(language === 'ar'
-                  ? 'تم تجاوز الحد المسموح لاستخدام خدمة الذكاء الاصطناعي. يرجى المحاولة لاحقاً.'
-                  : 'AI service rate limit exceeded. Please try again later.');
+                  ? `الملف "${file.name}" هو صورة. يرجى رفع وثائق نصية (PDF، DOCX، TXT) فقط.`
+                  : `File "${file.name}" is an image. Please upload text documents (PDF, DOCX, TXT) only.`);
+              } else if (fileError.message.includes('scanned') || fileError.message.includes('image-based')) {
+                throw new Error(language === 'ar' 
+                  ? `الملف "${file.name}" يبدو أنه ممسوح ضوئياً أو يحتوي على صور. يرجى رفع وثيقة نصية.`
+                  : `File "${file.name}" appears to be scanned or image-based. Please upload a text-based document.`);
+              } else if (fileError.message.includes('password-protected')) {
+                throw new Error(language === 'ar' 
+                  ? `الملف "${file.name}" قد يكون محمياً بكلمة مرور. يرجى رفع ملف غير محمي.`
+                  : `File "${file.name}" may be password-protected. Please upload an unprotected file.`);
               }
             }
             
@@ -147,13 +173,13 @@ export default function CriteriaUploadBox({
 
       if (validTexts.length === 0) {
         throw new Error(language === 'ar' 
-          ? 'فشل في استخراج النص من جميع الملفات باستخدام الذكاء الاصطناعي'
-          : 'Failed to extract text from all files using AI Vision');
+          ? 'فشل في استخراج النص من جميع الملفات'
+          : 'Failed to extract text from all files');
       }
       
       // Combine all text content with file source information
       let combinedText = validTexts.map(result => 
-        `=== ${result.filename} (مستخرج بالذكاء الاصطناعي) ===\n${result.text}`
+        `=== ${result.filename} ===\n${result.text}`
       ).join('\n\n--- الملف التالي ---\n\n');
       
       // Limit combined text to prevent token overflow
@@ -163,21 +189,21 @@ export default function CriteriaUploadBox({
       }
 
       // Now send the extracted text to completion API
-      setVisionProgress(language === 'ar' 
+      setProcessingProgress(language === 'ar' 
         ? 'تحليل المحتوى المستخرج باستخدام الذكاء الاصطناعي...' 
         : 'Analyzing extracted content with AI...');
 
-      console.log('📤 Sending Vision API extracted text to completion API...');
+      console.log('📤 Sending extracted text to completion API...');
       console.log(`📊 Text length: ${combinedText.length} characters`);
 
       // Analyze against specific criteria using completion API
-      const result = await analyzeDocumentForCriteria(combinedText, criteriaId, language, true);
+      const result = await analyzeDocumentForCriteria(combinedText, criteriaId, language, false);
       
       setAnalysis(result);
       onAnalysisComplete(criteriaId, result);
 
       // Clear progress after successful completion
-      setVisionProgress('');
+      setProcessingProgress('');
 
     } catch (error) {
       console.error('Analysis error:', error);
@@ -185,15 +211,11 @@ export default function CriteriaUploadBox({
       // Provide user-friendly error messages
       let errorMessage = '';
       if (error instanceof Error) {
-        if (error.message.includes('unsupported image') || error.message.includes('invalid_image_format')) {
-          errorMessage = language === 'ar' 
-            ? 'تنسيق الملف غير مدعوم من قبل الذكاء الاصطناعي. يرجى استخدام ملفات PNG أو JPEG أو GIF أو WebP فقط.'
-            : 'File format not supported by AI Vision. Please use PNG, JPEG, GIF, or WebP files only.';
-        } else if (error.message.includes('rate limit')) {
-          errorMessage = language === 'ar'
-            ? 'تم تجاوز الحد المسموح لاستخدام خدمة الذكاء الاصطناعي. يرجى المحاولة لاحقاً.'
-            : 'AI service rate limit exceeded. Please try again later.';
-        } else if (error.message.includes('Vision API') || error.message.includes('الذكاء الاصطناعي')) {
+        if (error.message.includes('Image file detected') || error.message.includes('صورة')) {
+          errorMessage = error.message;
+        } else if (error.message.includes('scanned') || error.message.includes('ممسوح ضوئياً')) {
+          errorMessage = error.message;
+        } else if (error.message.includes('password-protected') || error.message.includes('محمي بكلمة مرور')) {
           errorMessage = error.message;
         } else if (error.message.includes('API') || error.message.includes('network')) {
           errorMessage = language === 'ar' 
@@ -209,7 +231,7 @@ export default function CriteriaUploadBox({
       }
       
       setError(errorMessage);
-      setVisionProgress('');
+      setProcessingProgress('');
     } finally {
       setIsAnalyzing(false);
     }
@@ -222,7 +244,7 @@ export default function CriteriaUploadBox({
     if (newFiles.length === 0) {
       setAnalysis(null);
       setError('');
-      setVisionProgress('');
+      setProcessingProgress('');
     } else {
       analyzeFiles(newFiles);
     }
@@ -264,6 +286,15 @@ export default function CriteriaUploadBox({
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   };
 
+  const getFileIcon = (file: File) => {
+    if (isVisualDocument(file)) {
+      return <Image className="w-5 h-5 text-red-600" />;
+    } else if (file.type === 'application/pdf') {
+      return <FileText className="w-5 h-5 text-red-600" />;
+    }
+    return <File className="w-5 h-5 text-blue-600" />;
+  };
+
   return (
     <div className={`border-2 rounded-lg p-4 transition-all ${
       analysis ? getStatusColor(analysis.status) : 'border-gray-200 bg-white'
@@ -296,14 +327,14 @@ export default function CriteriaUploadBox({
       {uploadedFiles.length === 0 ? (
         <div
           className={`border-2 border-dashed rounded-lg p-6 text-center transition-colors ${
-            dragActive ? 'border-purple-500 bg-purple-50' : 'border-gray-300 hover:border-gray-400'
+            dragActive ? 'border-blue-500 bg-blue-50' : 'border-gray-300 hover:border-gray-400'
           }`}
           onDragEnter={handleDrag}
           onDragLeave={handleDrag}
           onDragOver={handleDrag}
           onDrop={handleDrop}
         >
-          <Eye className="w-8 h-8 text-purple-400 mx-auto mb-2" />
+          <FileText className="w-8 h-8 text-blue-400 mx-auto mb-2" />
           <p className="text-sm font-medium text-gray-700 mb-1">
             {language === 'ar' 
               ? 'اسحب وأفلت الملفات هنا أو انقر للتحديد'
@@ -311,24 +342,25 @@ export default function CriteriaUploadBox({
           </p>
           <p className="text-xs text-gray-500 mb-2">
             {language === 'ar' 
-              ? 'جميع أنواع الملفات مدعومة - حد أقصى 10 ميجابايت لكل ملف'
-              : 'All file types supported - Max 10MB each'}
+              ? 'ملفات PDF أو DOCX أو TXT (حد أقصى 10 ميجابايت لكل ملف)'
+              : 'PDF, DOCX, or TXT files (Max 10MB each)'}
           </p>
-          <div className={`flex items-center justify-center space-x-2 mb-3 text-xs text-purple-600 ${language === 'ar' ? 'space-x-reverse' : ''}`}>
+          <div className={`flex items-center justify-center space-x-2 mb-3 text-xs text-blue-600 ${language === 'ar' ? 'space-x-reverse' : ''}`}>
             <Brain className="w-4 h-4" />
             <span>
               {language === 'ar' 
-                ? 'جميع الملفات تتم معالجتها بالذكاء الاصطناعي المتقدم'
-                : 'All files processed with advanced AI Vision'}
+                ? 'تحليل ذكي للوثائق النصية'
+                : 'Smart analysis for text documents'}
             </span>
           </div>
-          <div className={`text-xs text-blue-600 mb-3 ${language === 'ar' ? 'text-right' : 'text-left'}`}>
+          <div className={`text-xs text-orange-600 mb-3 ${language === 'ar' ? 'text-right' : 'text-left'}`}>
             {language === 'ar' 
-              ? '🤖 تقنية الذكاء الاصطناعي تقرأ النص من جميع أنواع الملفات (PDF، DOCX، صور، إلخ)'
-              : '🤖 AI Vision technology reads text from all file types (PDF, DOCX, images, etc.)'}
+              ? '📝 ملاحظة: هذا النظام يعالج الوثائق النصية فقط (PDF، DOCX، TXT)'
+              : '📝 Note: This system processes text documents only (PDF, DOCX, TXT)'}
           </div>
           <input
             type="file"
+            accept=".pdf,.docx,.txt"
             onChange={handleFileInput}
             className="hidden"
             id={`file-upload-${criteriaId}`}
@@ -336,7 +368,7 @@ export default function CriteriaUploadBox({
           />
           <label
             htmlFor={`file-upload-${criteriaId}`}
-            className={`bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg cursor-pointer inline-flex items-center space-x-2 transition-colors text-sm ${language === 'ar' ? 'space-x-reverse' : ''}`}
+            className={`bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg cursor-pointer inline-flex items-center space-x-2 transition-colors text-sm ${language === 'ar' ? 'space-x-reverse' : ''}`}
           >
             <Upload className="w-4 h-4" />
             <span>{language === 'ar' ? 'اختر ملفات' : 'Choose Files'}</span>
@@ -348,16 +380,18 @@ export default function CriteriaUploadBox({
           {uploadedFiles.map((file, index) => (
             <div key={index} className="flex items-center justify-between bg-gray-50 rounded-lg p-3">
               <div className={`flex items-center space-x-3 ${language === 'ar' ? 'space-x-reverse' : ''}`}>
-                <Eye className="w-5 h-5 text-purple-600" />
+                {getFileIcon(file)}
                 <div>
                   <p className={`text-sm font-medium text-gray-800 ${language === 'ar' ? 'text-right' : 'text-left'}`}>
                     {file.name}
                   </p>
                   <p className={`text-xs text-gray-500 ${language === 'ar' ? 'text-right' : 'text-left'}`}>
                     {formatFileSize(file.size)}
-                    <span className="ml-2 text-purple-600">
-                      {language === 'ar' ? '(معالجة بالذكاء الاصطناعي)' : '(AI Vision Processing)'}
-                    </span>
+                    {!isVisualDocument(file) && (
+                      <span className="ml-2 text-blue-600">
+                        {language === 'ar' ? '(وثيقة نصية)' : '(Text document)'}
+                      </span>
+                    )}
                   </p>
                 </div>
               </div>
@@ -375,6 +409,7 @@ export default function CriteriaUploadBox({
           <div className="text-center pt-2">
             <input
               type="file"
+              accept=".pdf,.docx,.txt"
               onChange={handleFileInput}
               className="hidden"
               id={`file-upload-more-${criteriaId}`}
@@ -382,7 +417,7 @@ export default function CriteriaUploadBox({
             />
             <label
               htmlFor={`file-upload-more-${criteriaId}`}
-              className={`text-purple-600 hover:text-purple-700 cursor-pointer inline-flex items-center space-x-1 text-sm ${language === 'ar' ? 'space-x-reverse' : ''}`}
+              className={`text-blue-600 hover:text-blue-700 cursor-pointer inline-flex items-center space-x-1 text-sm ${language === 'ar' ? 'space-x-reverse' : ''}`}
             >
               <Upload className="w-4 h-4" />
               <span>{language === 'ar' ? 'إضافة ملفات أخرى' : 'Add More Files'}</span>
@@ -391,25 +426,24 @@ export default function CriteriaUploadBox({
         </div>
       )}
 
-      {/* Analysis Status with Vision API Progress */}
+      {/* Analysis Status */}
       {isAnalyzing && (
-        <div className={`mt-4 p-3 bg-purple-50 rounded-lg ${language === 'ar' ? 'text-right' : 'text-left'}`}>
+        <div className={`mt-4 p-3 bg-blue-50 rounded-lg ${language === 'ar' ? 'text-right' : 'text-left'}`}>
           <div className={`flex items-center space-x-2 mb-2 ${language === 'ar' ? 'space-x-reverse flex-row-reverse' : ''}`}>
-            <Loader className="w-5 h-5 text-purple-600 animate-spin" />
-            <Eye className="w-5 h-5 text-purple-600" />
-            <span className="text-purple-700 text-sm font-medium">
-              {language === 'ar' ? 'جاري التحليل بالذكاء الاصطناعي...' : 'AI Vision Analysis in Progress...'}
+            <Loader className="w-5 h-5 text-blue-600 animate-spin" />
+            <span className="text-blue-700 text-sm font-medium">
+              {language === 'ar' ? 'جاري التحليل الذكي...' : 'Smart Analysis in Progress...'}
             </span>
           </div>
-          {visionProgress && (
-            <div className="text-sm text-purple-600 bg-purple-100 rounded p-2">
-              {visionProgress}
+          {processingProgress && (
+            <div className="text-sm text-blue-600 bg-blue-100 rounded p-2">
+              {processingProgress}
             </div>
           )}
-          <div className={`mt-2 text-xs text-purple-600 ${language === 'ar' ? 'text-right' : 'text-left'}`}>
+          <div className={`mt-2 text-xs text-blue-600 ${language === 'ar' ? 'text-right' : 'text-left'}`}>
             {language === 'ar' 
-              ? '🤖 يتم استخدام تقنية الذكاء الاصطناعي المتقدمة لقراءة وتحليل جميع الملفات'
-              : '🤖 Using advanced AI Vision technology to read and analyze all files'}
+              ? '📄 يتم استخراج وتحليل النص من الوثائق'
+              : '📄 Extracting and analyzing text from documents'}
           </div>
         </div>
       )}
@@ -423,16 +457,16 @@ export default function CriteriaUploadBox({
               {language === 'ar' ? 'ثقة الذكاء الاصطناعي:' : 'AI Confidence:'}
             </span>
             <div className={`flex items-center space-x-1 ${language === 'ar' ? 'space-x-reverse' : ''}`}>
-              <Brain className="w-4 h-4 text-purple-500" />
-              <span className="text-sm font-medium text-purple-600">{analysis.confidence}%</span>
+              <Brain className="w-4 h-4 text-blue-500" />
+              <span className="text-sm font-medium text-blue-600">{analysis.confidence}%</span>
             </div>
           </div>
 
-          {/* Vision Processing Indicator */}
+          {/* Processing Method Indicator */}
           <div className={`flex items-center space-x-2 text-xs ${language === 'ar' ? 'space-x-reverse flex-row-reverse' : ''}`}>
-            <Eye className="w-4 h-4 text-purple-500" />
-            <span className="text-purple-600">
-              {language === 'ar' ? 'تم استخدام تقنية الذكاء الاصطناعي لقراءة جميع الملفات' : 'AI Vision technology was used to read all files'}
+            <FileText className="w-4 h-4 text-blue-500" />
+            <span className="text-blue-600">
+              {language === 'ar' ? 'تم استخراج النص مباشرة من الوثائق' : 'Text extracted directly from documents'}
             </span>
           </div>
 
@@ -454,7 +488,7 @@ export default function CriteriaUploadBox({
               </h4>
               <div className="space-y-1">
                 {analysis.evidence.slice(0, 2).map((evidence, index) => (
-                  <div key={index} className={`bg-white border-l-4 border-purple-400 p-2 rounded text-xs text-gray-600 italic ${language === 'ar' ? 'border-l-0 border-r-4 text-right' : 'text-left'}`}>
+                  <div key={index} className={`bg-white border-l-4 border-blue-400 p-2 rounded text-xs text-gray-600 italic ${language === 'ar' ? 'border-l-0 border-r-4 text-right' : 'text-left'}`}>
                     "{evidence}"
                   </div>
                 ))}
@@ -476,7 +510,7 @@ export default function CriteriaUploadBox({
         </div>
       )}
 
-      {/* Error Display */}
+      {/* Error Display with Better Guidance */}
       {error && (
         <div className={`mt-4 p-4 bg-red-50 border border-red-200 rounded-lg ${language === 'ar' ? 'text-right' : 'text-left'}`}>
           <div className={`flex items-center space-x-2 mb-2 ${language === 'ar' ? 'space-x-reverse flex-row-reverse' : ''}`}>
@@ -489,8 +523,8 @@ export default function CriteriaUploadBox({
             {error}
           </p>
           
-          {/* Helpful suggestions for unsupported formats */}
-          {(error.includes('unsupported') || error.includes('غير مدعوم')) && (
+          {/* Helpful suggestions based on error type */}
+          {(error.includes('صورة') || error.includes('image')) && (
             <div className="bg-blue-50 border border-blue-200 rounded p-3 mt-3">
               <h4 className={`text-sm font-medium text-blue-800 mb-2 ${language === 'ar' ? 'text-right' : 'text-left'}`}>
                 {language === 'ar' ? 'الحل المقترح:' : 'Suggested Solution:'}
@@ -500,32 +534,45 @@ export default function CriteriaUploadBox({
                   <span className={`${language === 'ar' ? 'ml-2' : 'mr-2'} text-blue-600`}>•</span>
                   <span>
                     {language === 'ar' 
-                      ? 'استخدم ملفات PNG أو JPEG أو GIF أو WebP فقط'
-                      : 'Use PNG, JPEG, GIF, or WebP files only'}
+                      ? 'استخدم ملفات PDF أو DOCX أو TXT التي تحتوي على نص قابل للقراءة'
+                      : 'Use PDF, DOCX, or TXT files that contain readable text'}
                   </span>
                 </li>
                 <li className={`flex items-start ${language === 'ar' ? 'flex-row-reverse' : ''}`}>
                   <span className={`${language === 'ar' ? 'ml-2' : 'mr-2'} text-blue-600`}>•</span>
                   <span>
                     {language === 'ar' 
-                      ? 'قم بتحويل ملفات PDF أو DOCX إلى صور للحصول على أفضل النتائج'
-                      : 'Convert PDF or DOCX files to images for best results'}
+                      ? 'تجنب الصور أو الملفات الممسوحة ضوئياً'
+                      : 'Avoid images or scanned files'}
                   </span>
                 </li>
               </ul>
             </div>
           )}
           
-          {(error.includes('rate limit') || error.includes('الحد المسموح')) && (
+          {(error.includes('ممسوح ضوئياً') || error.includes('scanned')) && (
             <div className="bg-yellow-50 border border-yellow-200 rounded p-3 mt-3">
               <h4 className={`text-sm font-medium text-yellow-800 mb-2 ${language === 'ar' ? 'text-right' : 'text-left'}`}>
-                {language === 'ar' ? 'تم تجاوز الحد المسموح:' : 'Rate Limit Exceeded:'}
+                {language === 'ar' ? 'للمستندات الممسوحة ضوئياً:' : 'For scanned documents:'}
               </h4>
-              <p className={`text-sm text-yellow-700 ${language === 'ar' ? 'text-right' : 'text-left'}`}>
-                {language === 'ar' 
-                  ? 'يرجى الانتظار قليلاً قبل المحاولة مرة أخرى. خدمة الذكاء الاصطناعي لديها حدود استخدام.'
-                  : 'Please wait a moment before trying again. The AI service has usage limits.'}
-              </p>
+              <ul className={`text-sm text-yellow-700 space-y-1 ${language === 'ar' ? 'text-right' : 'text-left'}`}>
+                <li className={`flex items-start ${language === 'ar' ? 'flex-row-reverse' : ''}`}>
+                  <span className={`${language === 'ar' ? 'ml-2' : 'mr-2'} text-yellow-600`}>•</span>
+                  <span>
+                    {language === 'ar' 
+                      ? 'استخدم برنامج OCR لتحويل الصورة إلى نص'
+                      : 'Use OCR software to convert the image to text'}
+                  </span>
+                </li>
+                <li className={`flex items-start ${language === 'ar' ? 'flex-row-reverse' : ''}`}>
+                  <span className={`${language === 'ar' ? 'ml-2' : 'mr-2'} text-yellow-600`}>•</span>
+                  <span>
+                    {language === 'ar' 
+                      ? 'احفظ النتيجة كملف PDF أو DOCX يحتوي على نص'
+                      : 'Save the result as a PDF or DOCX file containing text'}
+                  </span>
+                </li>
+              </ul>
             </div>
           )}
         </div>
