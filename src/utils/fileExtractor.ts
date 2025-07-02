@@ -1,4 +1,7 @@
-import * as pdfParse from 'pdf-parse';
+import * as pdfjsLib from 'pdfjs-dist';
+
+// Set up PDF.js worker
+pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.js`;
 
 export async function extractTextFromFile(file: File): Promise<string> {
   console.log(`🔍 Starting extraction for: ${file.name}`);
@@ -55,39 +58,61 @@ async function extractTextFromPDF(arrayBuffer: ArrayBuffer, fileName: string): P
   console.log(`📕 Processing PDF file: ${fileName}`);
   
   try {
-    // Use pdf-parse library for proper PDF text extraction
-    const data = await pdfParse(arrayBuffer, {
-      // Options for better Arabic text handling
-      normalizeWhitespace: false,
-      disableCombineTextItems: false,
-      // Increase max buffer size for large PDFs
-      max: 0
+    // Use pdfjs-dist for browser-compatible PDF text extraction
+    const loadingTask = pdfjsLib.getDocument({
+      data: arrayBuffer,
+      cMapUrl: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.0.379/cmaps/',
+      cMapPacked: true,
     });
     
-    let text = data.text;
-    console.log(`📖 PDF parsing successful: ${text.length} characters extracted`);
-    console.log(`📄 PDF info: ${data.numpages} pages, ${data.numrender} rendered`);
+    const pdf = await loadingTask.promise;
+    console.log(`📖 PDF loaded successfully: ${pdf.numPages} pages`);
     
-    if (!text || text.trim().length === 0) {
+    let fullText = '';
+    
+    // Extract text from each page
+    for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+      try {
+        const page = await pdf.getPage(pageNum);
+        const textContent = await page.getTextContent();
+        
+        // Combine text items from the page
+        const pageText = textContent.items
+          .map((item: any) => item.str)
+          .join(' ');
+        
+        if (pageText.trim()) {
+          fullText += pageText + '\n';
+        }
+        
+        console.log(`📄 Page ${pageNum}: ${pageText.length} characters extracted`);
+      } catch (pageError) {
+        console.warn(`⚠️ Error extracting text from page ${pageNum}:`, pageError);
+        // Continue with other pages
+      }
+    }
+    
+    if (!fullText || fullText.trim().length === 0) {
       console.warn(`⚠️ No text content found in PDF ${fileName}`);
       throw new Error(`PDF "${fileName}" contains no readable text. This may be a scanned document or image-based PDF.`);
     }
     
     // Clean up the extracted text
-    text = cleanExtractedText(text);
+    const cleanedText = cleanExtractedText(fullText);
     
     // Limit to prevent token overflow
-    if (text.length > 80000) {
-      text = text.substring(0, 80000) + '\n\n[Text truncated due to length...]';
+    let finalText = cleanedText;
+    if (finalText.length > 80000) {
+      finalText = finalText.substring(0, 80000) + '\n\n[Text truncated due to length...]';
       console.log(`✂️ Text truncated to 80,000 characters`);
     }
     
-    if (text.length < 50) {
-      throw new Error(`PDF "${fileName}" extracted text is too short (${text.length} characters). May be a scanned document.`);
+    if (finalText.length < 50) {
+      throw new Error(`PDF "${fileName}" extracted text is too short (${finalText.length} characters). May be a scanned document.`);
     }
     
-    console.log(`✅ PDF extraction successful: ${text.length} characters`);
-    return text;
+    console.log(`✅ PDF extraction successful: ${finalText.length} characters`);
+    return finalText;
     
   } catch (error) {
     console.error(`❌ PDF parsing failed for ${fileName}:`, error);
@@ -177,10 +202,10 @@ async function extractTextFromDOCX(arrayBuffer: ArrayBuffer, fileName: string): 
           // Remove XML tags and decode entities
           let text = match.replace(/<w:t[^>]*>|<\/w:t>/g, '');
           text = text
-            .replace(/&lt;/g, '<')
-            .replace(/&gt;/g, '>')
-            .replace(/&amp;/g, '&')
-            .replace(/&quot;/g, '"')
+            .replace(/</g, '<')
+            .replace(/>/g, '>')
+            .replace(/&/g, '&')
+            .replace(/"/g, '"')
             .replace(/&apos;/g, "'");
           return text;
         })
