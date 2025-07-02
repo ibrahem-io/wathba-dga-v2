@@ -187,8 +187,8 @@ async function extractPDFManually(arrayBuffer: ArrayBuffer, fileName: string): P
             .replace(/\\n/g, '\n')
             .replace(/\\r/g, '\r')
             .replace(/\\t/g, '\t')
-            .replace(/\\\\(/g, '(')
-            .replace(/\\\\)/g, ')')
+            .replace(/\\\(/g, '(')
+            .replace(/\\\)/g, ')')
             .replace(/\\\\/g, '\\');
           
           if (text.trim() && text.length > 1) {
