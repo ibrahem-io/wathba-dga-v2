@@ -109,7 +109,7 @@ export default function CriteriaUploadBox({
       // Show initial progress
       setOcrProgress(language === 'ar' ? 'بدء معالجة الملفات...' : 'Starting file processing...');
 
-      // Extract text from all files
+      // Extract text from all files with better error handling
       const extractedTexts = await Promise.all(
         files.map(async (file, index) => {
           try {
@@ -149,13 +149,45 @@ export default function CriteriaUploadBox({
             }
           } catch (fileError) {
             console.error(`Error processing file ${file.name}:`, fileError);
+            
+            // Handle specific error types
+            if (fileError instanceof Error) {
+              if (fileError.message.includes('detached') || fileError.message.includes('ArrayBuffer')) {
+                return `[خطأ في الذاكرة للملف: ${file.name} - يرجى إعادة تحميل الملف]`;
+              } else if (fileError.message.includes('too large')) {
+                return `[الملف كبير جداً: ${file.name} - يرجى استخدام ملف أصغر]`;
+              } else if (fileError.message.includes('corrupted')) {
+                return `[ملف تالف: ${file.name} - يرجى التحقق من سلامة الملف]`;
+              }
+            }
+            
             return `[خطأ في معالجة الملف: ${file.name}]`;
           }
         })
       );
 
+      // Filter out error messages and combine valid text
+      const validTexts = extractedTexts.filter(text => 
+        text && !text.startsWith('[خطأ') && !text.startsWith('[Error') && text.length > 10
+      );
+
       // Combine all text content
-      let combinedText = extractedTexts.join('\n\n');
+      let combinedText = validTexts.join('\n\n');
+      
+      // Check if we have any errors to show
+      const errorTexts = extractedTexts.filter(text => 
+        text && (text.startsWith('[خطأ') || text.startsWith('[Error'))
+      );
+
+      if (errorTexts.length > 0) {
+        // Show warning about files that couldn't be processed
+        setOcrProgress(language === 'ar' 
+          ? `تحذير: ${errorTexts.length} ملف لم يتم معالجته بنجاح - سيتم التحليل بالملفات المتاحة`
+          : `Warning: ${errorTexts.length} file(s) could not be processed - analysis will continue with available files`);
+        
+        // Wait a moment to show the warning
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
       
       // Limit combined text to 80,000 characters
       const maxCombinedLength = 80000;
@@ -164,9 +196,16 @@ export default function CriteriaUploadBox({
       }
 
       if (!combinedText || combinedText.trim().length < 50) {
-        throw new Error(language === 'ar' 
-          ? 'لم يتم العثور على نص كافٍ في الملفات للتحليل'
-          : 'Insufficient text found in files for analysis');
+        if (errorTexts.length === files.length) {
+          // All files failed to process
+          throw new Error(language === 'ar' 
+            ? 'فشل في معالجة جميع الملفات. يرجى التحقق من صحة الملفات أو تجربة ملفات بصيغة أخرى.'
+            : 'Failed to process all files. Please check file integrity or try different file formats.');
+        } else {
+          throw new Error(language === 'ar' 
+            ? 'لم يتم العثور على نص كافٍ في الملفات للتحليل'
+            : 'Insufficient text found in files for analysis');
+        }
       }
 
       // Update progress for AI analysis
@@ -185,10 +224,28 @@ export default function CriteriaUploadBox({
 
     } catch (error) {
       console.error('Analysis error:', error);
-      setError(error instanceof Error ? error.message : 
-        (language === 'ar' 
-          ? 'حدث خطأ أثناء تحليل الملفات'
-          : 'An error occurred while analyzing the files'));
+      
+      // Provide user-friendly error messages
+      let errorMessage = '';
+      if (error instanceof Error) {
+        if (error.message.includes('detached') || error.message.includes('ArrayBuffer')) {
+          errorMessage = language === 'ar' 
+            ? 'حدث خطأ في الذاكرة أثناء معالجة الملفات. يرجى إعادة تحميل الملفات والمحاولة مرة أخرى.'
+            : 'Memory error occurred while processing files. Please reload the files and try again.';
+        } else if (error.message.includes('API') || error.message.includes('network')) {
+          errorMessage = language === 'ar' 
+            ? 'خطأ في الاتصال بخدمة الذكاء الاصطناعي. يرجى التحقق من الاتصال بالإنترنت والمحاولة مرة أخرى.'
+            : 'Error connecting to AI service. Please check your internet connection and try again.';
+        } else {
+          errorMessage = error.message;
+        }
+      } else {
+        errorMessage = language === 'ar' 
+          ? 'حدث خطأ غير متوقع أثناء تحليل الملفات'
+          : 'An unexpected error occurred while analyzing the files';
+      }
+      
+      setError(errorMessage);
       setOcrProgress('');
     } finally {
       setIsAnalyzing(false);
@@ -475,13 +532,95 @@ export default function CriteriaUploadBox({
         </div>
       )}
 
-      {/* Error Display */}
+      {/* Error Display with Better Guidance */}
       {error && (
-        <div className={`mt-4 p-3 bg-red-50 border border-red-200 rounded-lg flex items-center space-x-2 ${language === 'ar' ? 'space-x-reverse' : ''}`}>
-          <AlertCircle className="w-5 h-5 text-red-500" />
-          <span className={`text-red-700 text-sm ${language === 'ar' ? 'text-right' : 'text-left'}`}>
+        <div className={`mt-4 p-4 bg-red-50 border border-red-200 rounded-lg ${language === 'ar' ? 'text-right' : 'text-left'}`}>
+          <div className={`flex items-center space-x-2 mb-2 ${language === 'ar' ? 'space-x-reverse flex-row-reverse' : ''}`}>
+            <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0" />
+            <span className="text-red-700 text-sm font-medium">
+              {language === 'ar' ? 'خطأ في المعالجة' : 'Processing Error'}
+            </span>
+          </div>
+          <p className="text-red-700 text-sm mb-3">
             {error}
-          </span>
+          </p>
+          
+          {/* Helpful suggestions based on error type */}
+          {(error.includes('detached') || error.includes('ArrayBuffer') || error.includes('الذاكرة')) && (
+            <div className="bg-yellow-50 border border-yellow-200 rounded p-3 mt-3">
+              <h4 className={`text-sm font-medium text-yellow-800 mb-2 ${language === 'ar' ? 'text-right' : 'text-left'}`}>
+                {language === 'ar' ? 'اقتراحات للحل:' : 'Suggested Solutions:'}
+              </h4>
+              <ul className={`text-sm text-yellow-700 space-y-1 ${language === 'ar' ? 'text-right' : 'text-left'}`}>
+                <li className={`flex items-start ${language === 'ar' ? 'flex-row-reverse' : ''}`}>
+                  <span className={`${language === 'ar' ? 'ml-2' : 'mr-2'} text-yellow-600`}>•</span>
+                  <span>
+                    {language === 'ar' 
+                      ? 'أعد تحميل الصفحة وحاول مرة أخرى'
+                      : 'Refresh the page and try again'}
+                  </span>
+                </li>
+                <li className={`flex items-start ${language === 'ar' ? 'flex-row-reverse' : ''}`}>
+                  <span className={`${language === 'ar' ? 'ml-2' : 'mr-2'} text-yellow-600`}>•</span>
+                  <span>
+                    {language === 'ar' 
+                      ? 'استخدم ملفات أصغر حجماً (أقل من 5 ميجابايت)'
+                      : 'Use smaller files (less than 5MB)'}
+                  </span>
+                </li>
+                <li className={`flex items-start ${language === 'ar' ? 'flex-row-reverse' : ''}`}>
+                  <span className={`${language === 'ar' ? 'ml-2' : 'mr-2'} text-yellow-600`}>•</span>
+                  <span>
+                    {language === 'ar' 
+                      ? 'جرب رفع ملف واحد في كل مرة'
+                      : 'Try uploading one file at a time'}
+                  </span>
+                </li>
+                <li className={`flex items-start ${language === 'ar' ? 'flex-row-reverse' : ''}`}>
+                  <span className={`${language === 'ar' ? 'ml-2' : 'mr-2'} text-yellow-600`}>•</span>
+                  <span>
+                    {language === 'ar' 
+                      ? 'تأكد من أن الملف غير تالف أو محمي بكلمة مرور'
+                      : 'Ensure the file is not corrupted or password-protected'}
+                  </span>
+                </li>
+              </ul>
+            </div>
+          )}
+          
+          {(error.includes('API') || error.includes('network') || error.includes('الاتصال')) && (
+            <div className="bg-blue-50 border border-blue-200 rounded p-3 mt-3">
+              <h4 className={`text-sm font-medium text-blue-800 mb-2 ${language === 'ar' ? 'text-right' : 'text-left'}`}>
+                {language === 'ar' ? 'مشكلة في الاتصال:' : 'Connection Issue:'}
+              </h4>
+              <ul className={`text-sm text-blue-700 space-y-1 ${language === 'ar' ? 'text-right' : 'text-left'}`}>
+                <li className={`flex items-start ${language === 'ar' ? 'flex-row-reverse' : ''}`}>
+                  <span className={`${language === 'ar' ? 'ml-2' : 'mr-2'} text-blue-600`}>•</span>
+                  <span>
+                    {language === 'ar' 
+                      ? 'تحقق من اتصالك بالإنترنت'
+                      : 'Check your internet connection'}
+                  </span>
+                </li>
+                <li className={`flex items-start ${language === 'ar' ? 'flex-row-reverse' : ''}`}>
+                  <span className={`${language === 'ar' ? 'ml-2' : 'mr-2'} text-blue-600`}>•</span>
+                  <span>
+                    {language === 'ar' 
+                      ? 'تأكد من صحة مفتاح API'
+                      : 'Verify your API key is correct'}
+                  </span>
+                </li>
+                <li className={`flex items-start ${language === 'ar' ? 'flex-row-reverse' : ''}`}>
+                  <span className={`${language === 'ar' ? 'ml-2' : 'mr-2'} text-blue-600`}>•</span>
+                  <span>
+                    {language === 'ar' 
+                      ? 'انتظر قليلاً ثم حاول مرة أخرى'
+                      : 'Wait a moment and try again'}
+                  </span>
+                </li>
+              </ul>
+            </div>
+          )}
         </div>
       )}
     </div>
