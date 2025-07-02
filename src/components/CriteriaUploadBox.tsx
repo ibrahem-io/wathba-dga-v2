@@ -114,7 +114,7 @@ export default function CriteriaUploadBox({
       // Show initial progress
       setOcrProgress(language === 'ar' ? 'بدء معالجة الملفات...' : 'Starting file processing...');
 
-      // Process files and extract text
+      // Process files and extract text - VISION API FIRST approach
       const extractedTexts = await Promise.all(
         files.map(async (file, index) => {
           try {
@@ -123,7 +123,7 @@ export default function CriteriaUploadBox({
               ? `معالجة الملف ${index + 1} من ${files.length}: ${file.name}` 
               : `Processing file ${index + 1} of ${files.length}: ${file.name}`);
 
-            // Check if file is an image that needs Vision API
+            // STEP 1: Check if file is an image - use Vision API directly
             if (isVisualDocument(file)) {
               setProcessingType('vision');
               setOcrProgress(language === 'ar' 
@@ -139,21 +139,75 @@ export default function CriteriaUploadBox({
                 text: extractedText,
                 isFromVision: true
               };
-            } else {
+            }
+
+            // STEP 2: For PDFs, try Vision API first if traditional extraction fails
+            if (file.type === 'application/pdf') {
               setProcessingType('text');
               setOcrProgress(language === 'ar' 
-                ? `استخراج النص من الملف: ${file.name}` 
-                : `Extracting text from file: ${file.name}`);
+                ? `محاولة استخراج النص من PDF: ${file.name}` 
+                : `Attempting text extraction from PDF: ${file.name}`);
               
-              // Use traditional text extraction
-              const extractedText = await extractTextFromFile(file);
-              
-              return {
-                filename: file.name,
-                text: extractedText,
-                isFromVision: false
-              };
+              try {
+                // Try traditional text extraction first
+                const extractedText = await extractTextFromFile(file);
+                
+                // Check if we got meaningful text (not just whitespace or very short)
+                const meaningfulText = extractedText.replace(/\s+/g, ' ').trim();
+                const hasGoodContent = meaningfulText.length > 100 && 
+                  /[a-zA-Z\u0600-\u06FF]{20,}/.test(meaningfulText);
+                
+                if (hasGoodContent) {
+                  console.log('✅ Traditional PDF extraction successful');
+                  return {
+                    filename: file.name,
+                    text: extractedText,
+                    isFromVision: false
+                  };
+                } else {
+                  console.log('⚠️ Traditional PDF extraction yielded poor results, trying Vision API...');
+                  throw new Error('Poor text extraction quality');
+                }
+              } catch (textExtractionError) {
+                console.log('📷 PDF text extraction failed, attempting Vision API...');
+                
+                // If traditional extraction fails, try Vision API
+                setProcessingType('vision');
+                setOcrProgress(language === 'ar' 
+                  ? `PDF يحتوي على صور - استخدام الذكاء الاصطناعي لقراءة النص: ${file.name}` 
+                  : `PDF contains images - using AI Vision to read text: ${file.name}`);
+                
+                try {
+                  // Convert PDF to base64 and use Vision API
+                  const base64Image = await fileToBase64(file);
+                  const extractedText = await extractTextFromImageWithVision(base64Image, language);
+                  
+                  return {
+                    filename: file.name,
+                    text: extractedText,
+                    isFromVision: true
+                  };
+                } catch (visionError) {
+                  console.error('❌ Vision API also failed for PDF:', visionError);
+                  throw new Error(`فشل في استخراج النص من PDF "${file.name}" باستخدام كل من الطرق التقليدية والذكاء الاصطناعي. قد يكون الملف تالفاً أو لا يحتوي على نص قابل للقراءة.`);
+                }
+              }
             }
+
+            // STEP 3: For other file types, use traditional extraction
+            setProcessingType('text');
+            setOcrProgress(language === 'ar' 
+              ? `استخراج النص من الملف: ${file.name}` 
+              : `Extracting text from file: ${file.name}`);
+            
+            const extractedText = await extractTextFromFile(file);
+            
+            return {
+              filename: file.name,
+              text: extractedText,
+              isFromVision: false
+            };
+
           } catch (fileError) {
             console.error(`Error processing file ${file.name}:`, fileError);
             
@@ -214,12 +268,16 @@ export default function CriteriaUploadBox({
         }
       }
 
-      // Update progress for AI analysis
+      // STEP 4: Now send the extracted text to completion API
       setOcrProgress(language === 'ar' 
-        ? 'تحليل المحتوى باستخدام الذكاء الاصطناعي...' 
-        : 'Analyzing content with AI...');
+        ? 'تحليل المحتوى المستخرج باستخدام الذكاء الاصطناعي...' 
+        : 'Analyzing extracted content with AI...');
 
-      // Analyze against specific criteria, indicating if Vision API was used
+      console.log('📤 Sending extracted text to completion API...');
+      console.log(`📊 Text length: ${combinedText.length} characters`);
+      console.log(`🔍 Has Vision results: ${hasVisionResults}`);
+
+      // Analyze against specific criteria using completion API
       const result = await analyzeDocumentForCriteria(combinedText, criteriaId, language, hasVisionResults);
       
       setAnalysis(result);
