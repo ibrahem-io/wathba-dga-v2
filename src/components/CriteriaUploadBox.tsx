@@ -1,7 +1,7 @@
 import React, { useState, useCallback } from 'react';
-import { Upload, File, X, AlertCircle, CheckCircle, XCircle, Brain, Loader, FileText } from 'lucide-react';
+import { Upload, File, X, AlertCircle, CheckCircle, XCircle, Brain, Loader, Eye, RefreshCw, FileText } from 'lucide-react';
 import { analyzeDocumentForCriteria } from '../services/openaiService';
-import { extractTextFromFile, isVisualDocument } from '../utils/fileExtractor';
+import { extractTextFromFile, detectLanguage, isVisualDocument } from '../utils/fileExtractor';
 
 interface CriteriaAnalysis {
   score: number;
@@ -36,6 +36,8 @@ export default function CriteriaUploadBox({
   const [analysis, setAnalysis] = useState<CriteriaAnalysis | null>(null);
   const [error, setError] = useState<string>('');
   const [dragActive, setDragActive] = useState(false);
+  const [extractedText, setExtractedText] = useState<string>('');
+  const [showTextPreview, setShowTextPreview] = useState(false);
   const [processingProgress, setProcessingProgress] = useState<string>('');
 
   const handleDrag = useCallback((e: React.DragEvent) => {
@@ -68,7 +70,7 @@ export default function CriteriaUploadBox({
     }
   };
 
-  const handleFiles = async (files: File[]) => {
+  const handleFiles = (files: File[]) => {
     const maxSize = 10 * 1024 * 1024; // 10MB
     const allowedTypes = [
       'application/pdf', 
@@ -111,13 +113,16 @@ export default function CriteriaUploadBox({
 
     setIsAnalyzing(true);
     setError('');
+    setExtractedText('');
     setProcessingProgress('');
 
     try {
+      console.log(`Extracting text from ${files.length} file(s)...`);
+      
       // Show initial progress
       setProcessingProgress(language === 'ar' ? 'بدء معالجة الملفات...' : 'Starting file processing...');
-
-      // Extract text from all files with better error handling
+      
+      // Extract text from all files with detailed progress
       const extractedTexts = await Promise.all(
         files.map(async (file, index) => {
           try {
@@ -126,15 +131,16 @@ export default function CriteriaUploadBox({
               ? `معالجة الملف ${index + 1} من ${files.length}: ${file.name}` 
               : `Processing file ${index + 1} of ${files.length}: ${file.name}`);
 
-            console.log(`📄 Processing text document: ${file.name}`);
-
+            console.log(`Processing file ${index + 1}: ${file.name}`);
             const text = await extractTextFromFile(file);
             
-            if (!text || text.trim().length < 20) {
+            console.log(`Extracted ${text.length} characters from ${file.name}`);
+            
+            if (!text || text.trim().length < 10) {
               throw new Error(
                 language === 'ar' 
-                  ? `الملف "${file.name}" لا يحتوي على نص كافٍ للتحليل`
-                  : `File "${file.name}" does not contain sufficient text for analysis`
+                  ? `الملف "${file.name}" لا يحتوي على نص كافٍ للتحليل (${text.length} حرف)`
+                  : `File "${file.name}" does not contain sufficient text for analysis (${text.length} characters)`
               );
             }
             
@@ -143,41 +149,31 @@ export default function CriteriaUploadBox({
               text: text,
               isFromText: true
             };
-
           } catch (extractError) {
-            console.error(`Error extracting from ${file.name}:`, extractError);
+            console.error(`❌ Document parsing failed for ${file.name}:`, extractError);
             
-            // Provide specific error messages based on error type
+            // Provide specific error guidance
             if (extractError instanceof Error) {
-              if (extractError.message.includes('password')) {
-                throw new Error(
-                  language === 'ar' 
-                    ? `الملف "${file.name}" محمي بكلمة مرور. يرجى رفع ملف غير محمي`
-                    : `File "${file.name}" is password-protected. Please upload an unprotected file`
-                );
-              } else if (extractError.message.includes('corrupted') || extractError.message.includes('images')) {
-                throw new Error(
-                  language === 'ar' 
-                    ? `الملف "${file.name}" قد يحتوي على صور فقط أو تالف. يرجى رفع ملف يحتوي على نص قابل للتحديد`
-                    : `File "${file.name}" may contain only images or be corrupted. Please upload a file with selectable text`
-                );
-              } else if (extractError.message.includes('format')) {
-                throw new Error(
-                  language === 'ar' 
-                    ? `تنسيق الملف "${file.name}" غير صالح. يرجى رفع ملف PDF أو DOCX أو TXT صحيح`
-                    : `File "${file.name}" has invalid format. Please upload a valid PDF, DOCX, or TXT file`
-                );
-              } else if (extractError.message.includes('sufficient text')) {
-                throw extractError; // Re-throw as is
+              let specificError = extractError.message;
+              
+              if (specificError.includes('scanned images') || specificError.includes('OCR')) {
+                specificError = language === 'ar' 
+                  ? `الملف "${file.name}" يحتوي على صور ممسوحة ضوئياً. يرجى:\n• استخدام أداة OCR لتحويل الصور إلى نص\n• نسخ النص ولصقه في ملف جديد\n• استخدام "حفظ باسم" ← "نص" من برنامج قراءة PDF`
+                  : `File "${file.name}" contains scanned images. Please:\n• Use OCR to convert images to text\n• Copy and paste the text into a new document\n• Use "Save As" → "Text" from your PDF viewer`;
+              } else if (specificError.includes('password')) {
+                specificError = language === 'ar' 
+                  ? `الملف "${file.name}" محمي بكلمة مرور. يرجى إزالة الحماية أولاً`
+                  : `File "${file.name}" is password-protected. Please remove protection first`;
+              } else if (specificError.includes('corrupted')) {
+                specificError = language === 'ar' 
+                  ? `الملف "${file.name}" قد يكون تالفاً. يرجى المحاولة بنسخة أخرى`
+                  : `File "${file.name}" may be corrupted. Please try another copy`;
               }
+              
+              throw new Error(specificError);
             }
             
-            // Generic error for unknown issues
-            throw new Error(
-              language === 'ar' 
-                ? `فشل في قراءة الملف "${file.name}". يرجى المحاولة بملف آخر أو تحويله إلى تنسيق نصي`
-                : `Failed to read file "${file.name}". Please try another file or convert it to text format`
-            );
+            throw extractError;
           }
         })
       );
@@ -192,16 +188,24 @@ export default function CriteriaUploadBox({
           ? 'فشل في استخراج النص من جميع الملفات'
           : 'Failed to extract text from all files');
       }
-      
-      // Combine all text content with file source information
+
+      // Combine all text content
       let combinedText = validTexts.map(result => 
         `=== ${result.filename} ===\n${result.text}`
       ).join('\n\n--- الملف التالي ---\n\n');
       
-      // Limit combined text to prevent token overflow
+      // Show preview of extracted text
+      setExtractedText(combinedText.substring(0, 1000) + (combinedText.length > 1000 ? '...' : ''));
+      
+      // Detect language
+      const detectedLang = detectLanguage(combinedText);
+      console.log(`Detected language: ${detectedLang}, UI language: ${language}`);
+      
+      // Limit combined text to prevent API issues
       const maxCombinedLength = 80000;
       if (combinedText.length > maxCombinedLength) {
         combinedText = combinedText.substring(0, maxCombinedLength) + '\n\n[Text truncated due to length...]';
+        console.log(`Text truncated from ${combinedText.length} to ${maxCombinedLength} characters`);
       }
 
       if (!combinedText || combinedText.trim().length < 50) {
@@ -210,16 +214,17 @@ export default function CriteriaUploadBox({
           : 'Insufficient text found in files for analysis. Please ensure files contain readable text');
       }
 
-      // Now send the extracted text to completion API
+      // Update progress for AI analysis
       setProcessingProgress(language === 'ar' 
         ? 'تحليل المحتوى المستخرج باستخدام الذكاء الاصطناعي...' 
         : 'Analyzing extracted content with AI...');
 
-      console.log('📤 Sending extracted text to completion API...');
-      console.log(`📊 Text length: ${combinedText.length} characters`);
+      console.log(`Sending ${combinedText.length} characters to AI for analysis...`);
 
-      // Analyze against specific criteria using completion API
-      const result = await analyzeDocumentForCriteria(combinedText, criteriaId, language, false);
+      // Analyze against specific criteria
+      const result = await analyzeDocumentForCriteria(combinedText, criteriaId, language);
+      
+      console.log('Analysis completed:', result);
       
       setAnalysis(result);
       onAnalysisComplete(criteriaId, result);
@@ -233,10 +238,10 @@ export default function CriteriaUploadBox({
       let errorMessage = '';
       
       if (error instanceof Error) {
-        // Use the specific error message if it's already user-friendly
-        if (error.message.includes('محمي بكلمة مرور') || error.message.includes('password-protected') ||
-            error.message.includes('صور فقط') || error.message.includes('only images') ||
-            error.message.includes('تنسيق') || error.message.includes('format') ||
+        // Use specific error messages
+        if (error.message.includes('صور ممسوحة') || error.message.includes('scanned images') ||
+            error.message.includes('محمي بكلمة مرور') || error.message.includes('password-protected') ||
+            error.message.includes('تالف') || error.message.includes('corrupted') ||
             error.message.includes('نص كافٍ') || error.message.includes('sufficient text')) {
           errorMessage = error.message;
         } else if (error.message.includes('API key')) {
@@ -249,8 +254,8 @@ export default function CriteriaUploadBox({
             : 'Network connection error. Please check your connection and try again';
         } else {
           errorMessage = language === 'ar' 
-            ? 'حدث خطأ أثناء تحليل الملفات. يرجى المحاولة مرة أخرى أو استخدام ملفات أخرى'
-            : 'An error occurred while analyzing the files. Please try again or use different files';
+            ? `حدث خطأ أثناء تحليل الملفات: ${error.message}`
+            : `An error occurred while analyzing the files: ${error.message}`;
         }
       } else {
         errorMessage = language === 'ar' 
@@ -272,9 +277,16 @@ export default function CriteriaUploadBox({
     if (newFiles.length === 0) {
       setAnalysis(null);
       setError('');
+      setExtractedText('');
       setProcessingProgress('');
     } else {
       analyzeFiles(newFiles);
+    }
+  };
+
+  const retryAnalysis = () => {
+    if (uploadedFiles.length > 0) {
+      analyzeFiles(uploadedFiles);
     }
   };
 
@@ -443,6 +455,34 @@ export default function CriteriaUploadBox({
         </div>
       )}
 
+      {/* Text Preview */}
+      {extractedText && (
+        <div className="mt-4">
+          <button
+            onClick={() => setShowTextPreview(!showTextPreview)}
+            className={`flex items-center space-x-2 text-sm text-blue-600 hover:text-blue-700 ${language === 'ar' ? 'space-x-reverse' : ''}`}
+          >
+            <Eye className="w-4 h-4" />
+            <span>
+              {language === 'ar' 
+                ? (showTextPreview ? 'إخفاء معاينة النص' : 'عرض معاينة النص المستخرج')
+                : (showTextPreview ? 'Hide text preview' : 'Show extracted text preview')}
+            </span>
+          </button>
+          
+          {showTextPreview && (
+            <div className="mt-2 p-3 bg-gray-100 rounded-lg border">
+              <p className={`text-xs text-gray-600 mb-2 ${language === 'ar' ? 'text-right' : 'text-left'}`}>
+                {language === 'ar' ? 'معاينة النص المستخرج:' : 'Extracted text preview:'}
+              </p>
+              <pre className={`text-xs text-gray-700 whitespace-pre-wrap max-h-32 overflow-y-auto ${language === 'ar' ? 'text-right' : 'text-left'}`}>
+                {extractedText}
+              </pre>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Analysis Status */}
       {isAnalyzing && (
         <div className={`mt-4 p-3 bg-blue-50 rounded-lg ${language === 'ar' ? 'text-right' : 'text-left'}`}>
@@ -474,8 +514,8 @@ export default function CriteriaUploadBox({
               {language === 'ar' ? 'ثقة الذكاء الاصطناعي:' : 'AI Confidence:'}
             </span>
             <div className={`flex items-center space-x-1 ${language === 'ar' ? 'space-x-reverse' : ''}`}>
-              <Brain className="w-4 h-4 text-blue-500" />
-              <span className="text-sm font-medium text-blue-600">{analysis.confidence}%</span>
+              <Brain className="w-4 h-4 text-purple-500" />
+              <span className="text-sm font-medium text-purple-600">{analysis.confidence}%</span>
             </div>
           </div>
 
@@ -527,22 +567,33 @@ export default function CriteriaUploadBox({
         </div>
       )}
 
-      {/* Error Display with Better Guidance */}
+      {/* Error Display with Retry */}
       {error && (
-        <div className={`mt-4 p-4 bg-red-50 border border-red-200 rounded-lg ${language === 'ar' ? 'text-right' : 'text-left'}`}>
-          <div className={`flex items-center space-x-2 mb-2 ${language === 'ar' ? 'space-x-reverse flex-row-reverse' : ''}`}>
-            <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0" />
-            <span className="text-red-700 text-sm font-medium">
-              {language === 'ar' ? 'خطأ في المعالجة' : 'Processing Error'}
-            </span>
+        <div className="mt-4 space-y-2">
+          <div className={`p-3 bg-red-50 border border-red-200 rounded-lg flex items-start space-x-2 ${language === 'ar' ? 'space-x-reverse' : ''}`}>
+            <AlertCircle className="w-5 h-5 text-red-500 mt-0.5 flex-shrink-0" />
+            <div className="flex-1">
+              <span className={`text-red-700 text-sm ${language === 'ar' ? 'text-right' : 'text-left'} whitespace-pre-line`}>
+                {error}
+              </span>
+            </div>
           </div>
-          <p className="text-red-700 text-sm mb-3">
-            {error}
-          </p>
           
+          {uploadedFiles.length > 0 && (
+            <div className="text-center">
+              <button
+                onClick={retryAnalysis}
+                className={`text-blue-600 hover:text-blue-700 inline-flex items-center space-x-1 text-sm ${language === 'ar' ? 'space-x-reverse' : ''}`}
+              >
+                <RefreshCw className="w-4 h-4" />
+                <span>{language === 'ar' ? 'إعادة المحاولة' : 'Retry Analysis'}</span>
+              </button>
+            </div>
+          )}
+
           {/* Helpful suggestions based on error type */}
-          {(error.includes('صورة') || error.includes('image')) && (
-            <div className="bg-blue-50 border border-blue-200 rounded p-3 mt-3">
+          {(error.includes('صورة') || error.message?.includes('image')) && (
+            <div className="bg-blue-50 border border-blue-200 rounded p-3">
               <h4 className={`text-sm font-medium text-blue-800 mb-2 ${language === 'ar' ? 'text-right' : 'text-left'}`}>
                 {language === 'ar' ? 'الحل المقترح:' : 'Suggested Solution:'}
               </h4>
@@ -566,9 +617,9 @@ export default function CriteriaUploadBox({
               </ul>
             </div>
           )}
-          
+
           {(error.includes('محمي بكلمة مرور') || error.includes('password-protected')) && (
-            <div className="bg-yellow-50 border border-yellow-200 rounded p-3 mt-3">
+            <div className="bg-yellow-50 border border-yellow-200 rounded p-3">
               <h4 className={`text-sm font-medium text-yellow-800 mb-2 ${language === 'ar' ? 'text-right' : 'text-left'}`}>
                 {language === 'ar' ? 'للملفات المحمية:' : 'For protected files:'}
               </h4>
@@ -593,26 +644,26 @@ export default function CriteriaUploadBox({
             </div>
           )}
 
-          {(error.includes('صور فقط') || error.includes('only images') || error.includes('corrupted')) && (
-            <div className="bg-purple-50 border border-purple-200 rounded p-3 mt-3">
+          {(error.includes('صور ممسوحة') || error.includes('scanned images')) && (
+            <div className="bg-purple-50 border border-purple-200 rounded p-3">
               <h4 className={`text-sm font-medium text-purple-800 mb-2 ${language === 'ar' ? 'text-right' : 'text-left'}`}>
-                {language === 'ar' ? 'للملفات التالفة أو التي تحتوي على صور:' : 'For corrupted or image-only files:'}
+                {language === 'ar' ? 'للملفات الممسوحة ضوئياً:' : 'For scanned documents:'}
               </h4>
               <ul className={`text-sm text-purple-700 space-y-1 ${language === 'ar' ? 'text-right' : 'text-left'}`}>
                 <li className={`flex items-start ${language === 'ar' ? 'flex-row-reverse' : ''}`}>
                   <span className={`${language === 'ar' ? 'ml-2' : 'mr-2'} text-purple-600`}>•</span>
                   <span>
                     {language === 'ar' 
-                      ? 'تأكد من أن الملف يحتوي على نص قابل للتحديد'
-                      : 'Ensure the file contains selectable text'}
+                      ? 'استخدم أداة OCR لتحويل الصور إلى نص'
+                      : 'Use OCR tools to convert images to text'}
                   </span>
                 </li>
                 <li className={`flex items-start ${language === 'ar' ? 'flex-row-reverse' : ''}`}>
                   <span className={`${language === 'ar' ? 'ml-2' : 'mr-2'} text-purple-600`}>•</span>
                   <span>
                     {language === 'ar' 
-                      ? 'جرب حفظ الملف بصيغة مختلفة'
-                      : 'Try saving the file in a different format'}
+                      ? 'انسخ النص من الملف الأصلي والصقه في ملف جديد'
+                      : 'Copy text from the original file and paste into a new document'}
                   </span>
                 </li>
               </ul>
