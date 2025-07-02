@@ -167,14 +167,14 @@ async function extractPDFManually(arrayBuffer: ArrayBuffer, fileName: string): P
     
     // Method 1: Extract from content streams with better patterns
     const patterns = [
-      // Text showing operators
-      /\(((?:[^\\()]|\\.)*)?\)\s*Tj/g,
+      // Text showing operators - FIXED REGEX
+      /\(((?:[^\\()]|\\.)*?)\)\s*Tj/g,
       /\[((?:[^\]\\]|\\.)*)\]\s*TJ/g,
-      /\(((?:[^\\()]|\\.)*)?\)\s*'/g,
-      /\(((?:[^\\()]|\\.)*)?\)\s*"/g,
+      /\(((?:[^\\()]|\\.)*?)\)\s*'/g,
+      /\(((?:[^\\()]|\\.)*?)\)\s*"/g,
       // Text with positioning
-      /\(((?:[^\\()]|\\.)*)?\)\s*\d+\.?\d*\s+\d+\.?\d*\s+Td/g,
-      /\(((?:[^\\()]|\\.)*)?\)\s*Td/g,
+      /\(((?:[^\\()]|\\.)*?)\)\s*\d+\.?\d*\s+\d+\.?\d*\s+Td/g,
+      /\(((?:[^\\()]|\\.)*?)\)\s*Td/g,
       // Simple text patterns
       /BT\s*\/\w+\s+\d+\.?\d*\s+Tf\s*\(((?:[^\\()]|\\.)*)\)\s*Tj\s*ET/g
     ];
@@ -294,10 +294,10 @@ async function extractTextFromDOCX(arrayBuffer: ArrayBuffer, fileName: string): 
           .map(match => {
             return match
               .replace(/<[^>]*>/g, '')
-              .replace(/</g, '<')
-              .replace(/>/g, '>')
-              .replace(/&/g, '&')
-              .replace(/"/g, '"')
+              .replace(/&lt;/g, '<')
+              .replace(/&gt;/g, '>')
+              .replace(/&amp;/g, '&')
+              .replace(/&quot;/g, '"')
               .replace(/&apos;/g, "'");
           })
           .filter(text => text.trim().length > 0)

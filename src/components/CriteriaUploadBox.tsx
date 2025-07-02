@@ -79,7 +79,6 @@ export default function CriteriaUploadBox({
     ];
 
     const validFiles = files.filter(file => {
-      // Check for image files and provide helpful message
       if (isVisualDocument(file)) {
         setError(language === 'ar' 
           ? `الملف "${file.name}" هو صورة. هذا النظام يعالج الوثائق النصية فقط. يرجى رفع ملفات PDF أو DOCX أو TXT.`
@@ -117,26 +116,23 @@ export default function CriteriaUploadBox({
     setProcessingProgress('');
 
     try {
-      console.log(`Extracting text from ${files.length} file(s)...`);
+      console.log(`🔍 Starting analysis for ${files.length} file(s)...`);
       
-      // Show initial progress
       setProcessingProgress(language === 'ar' ? 'بدء معالجة الملفات...' : 'Starting file processing...');
       
-      // Extract text from all files with detailed progress
       const extractedTexts = await Promise.all(
         files.map(async (file, index) => {
           try {
-            // Update progress for each file
             setProcessingProgress(language === 'ar' 
               ? `معالجة الملف ${index + 1} من ${files.length}: ${file.name}` 
               : `Processing file ${index + 1} of ${files.length}: ${file.name}`);
 
-            console.log(`Processing file ${index + 1}: ${file.name}`);
+            console.log(`📄 Processing file ${index + 1}: ${file.name}`);
             const text = await extractTextFromFile(file);
             
-            console.log(`Extracted ${text.length} characters from ${file.name}`);
+            console.log(`✅ Extracted ${text.length} characters from ${file.name}`);
             
-            if (!text || text.trim().length < 10) {
+            if (!text || text.trim().length < 20) {
               throw new Error(
                 language === 'ar' 
                   ? `الملف "${file.name}" لا يحتوي على نص كافٍ للتحليل (${text.length} حرف)`
@@ -150,7 +146,7 @@ export default function CriteriaUploadBox({
               isFromText: true
             };
           } catch (extractError) {
-            console.error(`❌ Document parsing failed for ${file.name}:`, extractError);
+            console.error(`❌ Text extraction failed for ${file.name}:`, extractError);
             
             // Provide specific error guidance
             if (extractError instanceof Error) {
@@ -199,13 +195,13 @@ export default function CriteriaUploadBox({
       
       // Detect language
       const detectedLang = detectLanguage(combinedText);
-      console.log(`Detected language: ${detectedLang}, UI language: ${language}`);
+      console.log(`🌐 Detected language: ${detectedLang}, UI language: ${language}`);
       
       // Limit combined text to prevent API issues
       const maxCombinedLength = 80000;
       if (combinedText.length > maxCombinedLength) {
         combinedText = combinedText.substring(0, maxCombinedLength) + '\n\n[Text truncated due to length...]';
-        console.log(`Text truncated from ${combinedText.length} to ${maxCombinedLength} characters`);
+        console.log(`📏 Text truncated from ${combinedText.length} to ${maxCombinedLength} characters`);
       }
 
       if (!combinedText || combinedText.trim().length < 50) {
@@ -219,12 +215,12 @@ export default function CriteriaUploadBox({
         ? 'تحليل المحتوى المستخرج باستخدام الذكاء الاصطناعي...' 
         : 'Analyzing extracted content with AI...');
 
-      console.log(`Sending ${combinedText.length} characters to AI for analysis...`);
+      console.log(`🤖 Sending ${combinedText.length} characters to AI for analysis...`);
 
       // Analyze against specific criteria
       const result = await analyzeDocumentForCriteria(combinedText, criteriaId, language);
       
-      console.log('Analysis completed:', result);
+      console.log('✅ Analysis completed:', result);
       
       setAnalysis(result);
       onAnalysisComplete(criteriaId, result);
@@ -233,7 +229,7 @@ export default function CriteriaUploadBox({
       setProcessingProgress('');
 
     } catch (error) {
-      console.error('Analysis error:', error);
+      console.error('❌ Analysis error:', error);
       
       let errorMessage = '';
       
@@ -380,8 +376,8 @@ export default function CriteriaUploadBox({
             <Brain className="w-4 h-4" />
             <span>
               {language === 'ar' 
-                ? 'تحليل ذكي للوثائق النصية'
-                : 'Smart analysis for text documents'}
+                ? 'تحليل ذكي للوثائق النصية مع استخراج محسن'
+                : 'Smart analysis for text documents with enhanced extraction'}
             </span>
           </div>
           <div className={`text-xs text-orange-600 mb-3 ${language === 'ar' ? 'text-right' : 'text-left'}`}>
@@ -592,7 +588,7 @@ export default function CriteriaUploadBox({
           )}
 
           {/* Helpful suggestions based on error type */}
-          {(error.includes('صورة') || error.message?.includes('image')) && (
+          {(error.includes('صورة') || error.includes('image')) && (
             <div className="bg-blue-50 border border-blue-200 rounded p-3">
               <h4 className={`text-sm font-medium text-blue-800 mb-2 ${language === 'ar' ? 'text-right' : 'text-left'}`}>
                 {language === 'ar' ? 'الحل المقترح:' : 'Suggested Solution:'}
