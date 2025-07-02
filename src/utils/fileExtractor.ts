@@ -57,6 +57,9 @@ export async function extractTextFromFile(file: File): Promise<string> {
 async function extractTextFromPDF(arrayBuffer: ArrayBuffer, fileName: string): Promise<string> {
   console.log(`📕 Processing PDF file: ${fileName}`);
   
+  // Create a copy of the ArrayBuffer for fallback use before PDF.js potentially detaches it
+  const arrayBufferCopy = arrayBuffer.slice(0);
+  
   try {
     // Enhanced PDF.js configuration for better compatibility
     const loadingTask = pdfjsLib.getDocument({
@@ -106,11 +109,11 @@ async function extractTextFromPDF(arrayBuffer: ArrayBuffer, fileName: string): P
       }
     }
     
-    // If PDF.js didn't find text, try manual extraction
+    // If PDF.js didn't find text, try manual extraction using the copy
     if (!hasAnyText || fullText.trim().length < 50) {
       console.log(`🔄 PDF.js found minimal text, trying manual extraction...`);
       try {
-        const manualText = await extractTextFromPDFManual(arrayBuffer, fileName);
+        const manualText = await extractTextFromPDFManual(arrayBufferCopy, fileName);
         if (manualText && manualText.length > fullText.length) {
           fullText = manualText;
           hasAnyText = true;
@@ -124,8 +127,8 @@ async function extractTextFromPDF(arrayBuffer: ArrayBuffer, fileName: string): P
     if (!hasAnyText || fullText.trim().length < 50) {
       console.warn(`⚠️ No readable text found in PDF ${fileName}`);
       
-      // Check if this PDF might contain images that need OCR
-      const uint8Array = new Uint8Array(arrayBuffer);
+      // Check if this PDF might contain images that need OCR using the copy
+      const uint8Array = new Uint8Array(arrayBufferCopy);
       const pdfContent = new TextDecoder('latin1').decode(uint8Array);
       const hasImages = /\/Type\s*\/XObject.*\/Subtype\s*\/Image/i.test(pdfContent) || 
                        /\/Filter.*\/DCTDecode/i.test(pdfContent) ||
@@ -175,10 +178,10 @@ File "${fileName}" contains binary or encoded data that cannot be read. Please e
       }
     }
     
-    // Try manual extraction as fallback
+    // Try manual extraction as fallback using the copy
     try {
       console.log(`🔄 Trying manual extraction as fallback for ${fileName}`);
-      const manualText = await extractTextFromPDFManual(arrayBuffer, fileName);
+      const manualText = await extractTextFromPDFManual(arrayBufferCopy, fileName);
       if (manualText && manualText.length > 50 && !isBinaryData(manualText)) {
         return cleanExtractedText(manualText);
       }
