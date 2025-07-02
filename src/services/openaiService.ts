@@ -31,6 +31,241 @@ export interface CriteriaAnalysis {
   recommendations: string[];
 }
 
+// New function to extract text from images using Vision API
+export async function extractTextFromImageWithVision(
+  base64Image: string, 
+  language: 'ar' | 'en'
+): Promise<string> {
+  try {
+    console.log('🔍 Using Vision API to extract text from image...');
+    
+    const systemPrompt = language === 'ar' ? `
+أنت خبير في استخراج النص من الصور. مهمتك هي قراءة النص الموجود في الصورة بدقة عالية.
+
+تعليمات:
+1. اقرأ جميع النصوص الموجودة في الصورة
+2. احتفظ بالتنسيق والترتيب الأصلي للنص
+3. إذا كان النص باللغة العربية، تأكد من الكتابة بترميز UTF-8 الصحيح
+4. إذا كان النص باللغة الإنجليزية، اكتبه كما هو
+5. لا تضيف أي تفسيرات أو تعليقات، فقط النص المستخرج
+6. إذا لم تجد أي نص، اكتب "لا يوجد نص في الصورة"
+
+أرجع النص المستخرج فقط:
+` : `
+You are an expert in extracting text from images. Your task is to read the text in the image with high accuracy.
+
+Instructions:
+1. Read all text present in the image
+2. Maintain the original formatting and order of the text
+3. If the text is in Arabic, ensure correct UTF-8 encoding
+4. If the text is in English, write it as is
+5. Don't add any interpretations or comments, just the extracted text
+6. If no text is found, write "No text found in image"
+
+Return only the extracted text:
+`;
+
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o",
+      messages: [
+        {
+          role: "system",
+          content: systemPrompt
+        },
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: language === 'ar' 
+                ? "استخرج النص من هذه الصورة بدقة:"
+                : "Extract the text from this image accurately:"
+            },
+            {
+              type: "image_url",
+              image_url: {
+                url: `data:image/png;base64,${base64Image}`,
+                detail: "high"
+              }
+            }
+          ]
+        }
+      ],
+      max_tokens: 4000,
+      temperature: 0.1
+    });
+
+    const extractedText = response.choices[0]?.message?.content || '';
+    
+    if (!extractedText || extractedText.includes('لا يوجد نص') || extractedText.includes('No text found')) {
+      throw new Error(language === 'ar' 
+        ? 'لم يتم العثور على نص في الصورة'
+        : 'No text found in the image');
+    }
+
+    console.log(`✅ Vision API extracted ${extractedText.length} characters`);
+    return extractedText;
+
+  } catch (error) {
+    console.error('❌ Vision API text extraction failed:', error);
+    throw new Error(language === 'ar' 
+      ? 'فشل في استخراج النص من الصورة باستخدام الذكاء الاصطناعي'
+      : 'Failed to extract text from image using AI');
+  }
+}
+
+// Enhanced function to handle both text and image documents
+export async function analyzeDocumentForCriteria(
+  documentText: string, 
+  criteriaId: string, 
+  language: 'ar' | 'en',
+  isFromVision: boolean = false
+): Promise<CriteriaAnalysis> {
+  try {
+    const prompt = IMPROVED_CRITERIA_PROMPTS[criteriaId as keyof typeof IMPROVED_CRITERIA_PROMPTS];
+    if (!prompt) {
+      throw new Error(`Unknown criteria ID: ${criteriaId}`);
+    }
+
+    const criteriaPrompt = prompt[language];
+    
+    // Add context about the source of the text
+    const sourceContext = isFromVision 
+      ? (language === 'ar' 
+          ? '\n\nملاحظة: هذا النص تم استخراجه من صورة باستخدام تقنية الذكاء الاصطناعي للرؤية.'
+          : '\n\nNote: This text was extracted from an image using AI vision technology.')
+      : '';
+    
+    const systemPrompt = language === 'ar' ? `
+${criteriaPrompt}
+
+قم بتحليل الوثيقة بعقلية إيجابية.${sourceContext}
+
+معايير التقييم :
+- وجود أي إشارة للمتطلب (50%): هل يوجد أي ذكر أو إشارة لهذا المتطلب؟
+- مستوى التفصيل (30%): هل التفاصيل كافية أم تحتاج تطوير؟
+- وضوح التنفيذ (20%): هل التنفيذ واضح أم يحتاج توضيح؟
+
+نظام التقييم المحدث:
+- "pass": 60+ نقطة - يوجد دليل واضح على تلبية المتطلب (حتى لو بسيط)
+- "partial": 30-59 نقطة - يوجد إشارة للمتطلب لكن تحتاج تطوير
+- "fail": أقل من 30 نقطة - لا يوجد أي إشارة واضحة للمتطلب
+
+كن إيجابياً ومشجعاً في تحليلك. ابحث عن نقاط القوة أولاً.
+
+أرجع استجابة JSON بهذا الهيكل:
+{
+  "score": number (0-100),
+  "status": "pass" | "fail" | "partial",
+  "confidence": number (70-95),
+  "evidence": ["اقتباس محدد 1", "اقتباس محدد 2", "اقتباس محدد 3"],
+  "findings": "تحليل إيجابي ومتوازن يبرز نقاط القوة أولاً ثم يذكر فرص التحسين",
+  "recommendations": ["توصية بناءة 1", "توصية بناءة 2", "توصية بناءة 3"]
+}
+` : `
+${criteriaPrompt}
+
+Analyze the document with a positive and lenient mindset.${sourceContext}
+
+Lenient Evaluation Criteria:
+- Any reference to the requirement (50%): Is there any mention or reference to this requirement?
+- Level of detail (30%): Are the details sufficient or need development?
+- Implementation clarity (20%): Is implementation clear or needs clarification?
+
+Updated Scoring System:
+- "pass": 60+ points - Clear evidence of meeting the requirement (even if simple)
+- "partial": 30-59 points - Reference to requirement but needs development
+- "fail": Less than 30 points - No clear reference to the requirement
+
+Be positive and encouraging in your analysis. Look for strengths first.
+
+Return a JSON response with this structure:
+{
+  "score": number (0-100),
+  "status": "pass" | "fail" | "partial",
+  "confidence": number (70-95),
+  "evidence": ["specific quote 1", "specific quote 2", "specific quote 3"],
+  "findings": "positive and balanced analysis highlighting strengths first then improvement opportunities",
+  "recommendations": ["constructive recommendation 1", "constructive recommendation 2", "constructive recommendation 3"]
+}
+`;
+
+    // Limit document text to prevent token overflow
+    const maxTextLength = 35000;
+    let limitedText = documentText;
+    if (documentText.length > maxTextLength) {
+      limitedText = documentText.substring(0, maxTextLength) + '\n\n[Text truncated due to length...]';
+    }
+
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o",
+      messages: [
+        {
+          role: "system",
+          content: systemPrompt
+        },
+        {
+          role: "user",
+          content: `${language === 'ar' ? 'محتوى الوثيقة للتحليل مقابل المتطلب' : 'Document content for analysis against requirement'} ${criteriaId}:\n\n${limitedText}`
+        }
+      ],
+      temperature: 0.2,
+      max_tokens: 2000,
+      response_format: { type: "json_object" }
+    });
+
+    const responseContent = response.choices[0].message.content;
+    if (!responseContent) {
+      throw new Error('Empty response from OpenAI API');
+    }
+
+    let result;
+    try {
+      result = JSON.parse(responseContent);
+    } catch (parseError) {
+      console.error('JSON parsing error:', parseError);
+      console.error('Response content:', responseContent);
+      throw new Error('Invalid JSON response from OpenAI API');
+    }
+    
+    // Validate the result has required fields with default values
+    const validatedResult: CriteriaAnalysis = {
+      score: typeof result.score === 'number' ? Math.max(0, Math.min(100, result.score)) : 0,
+      status: ['pass', 'fail', 'partial'].includes(result.status) ? result.status : 'fail',
+      confidence: typeof result.confidence === 'number' ? Math.max(70, Math.min(95, result.confidence)) : 75,
+      evidence: Array.isArray(result.evidence) ? result.evidence.slice(0, 5) : [],
+      findings: typeof result.findings === 'string' ? result.findings : 'No analysis available',
+      recommendations: Array.isArray(result.recommendations) ? result.recommendations.slice(0, 5) : []
+    };
+
+    // Additional validation to ensure we have meaningful data
+    if (!validatedResult.findings || validatedResult.findings === 'No analysis available') {
+      throw new Error('Analysis result missing required findings');
+    }
+    
+    return validatedResult;
+  } catch (error) {
+    console.error('OpenAI API Error for criteria', criteriaId, ':', error);
+    
+    // Provide more specific error messages
+    if (error instanceof Error) {
+      if (error.message.includes('JSON')) {
+        throw new Error(language === 'ar' 
+          ? 'خطأ في تحليل استجابة الذكاء الاصطناعي. يرجى المحاولة مرة أخرى.'
+          : 'Error parsing AI response. Please try again.');
+      } else if (error.message.includes('API')) {
+        throw new Error(language === 'ar' 
+          ? 'فشل في الاتصال بخدمة الذكاء الاصطناعي. يرجى التحقق من مفتاح API.'
+          : 'Failed to connect to AI service. Please check your API key.');
+      }
+    }
+    
+    throw new Error(language === 'ar' 
+      ? 'فشل في تحليل الوثيقة. يرجى التحقق من مفتاح API والمحاولة مرة أخرى.'
+      : 'Failed to analyze document. Please check your API key and try again.');
+  }
+}
+
 const IMPROVED_CRITERIA_PROMPTS = {
   '5.4.1': {
     ar: `أنت خبير مدقق متخصص في تقييم المتطلب 5.4.1: "دراسات وبرامج الوعي بالتحول الرقمي"
@@ -259,149 +494,6 @@ Be lenient - any reference to future planning, development, or improvement count
 Keywords: strategy, plan, development, improvement, future, objectives, initiatives, progress, impact, success`
   }
 };
-
-export async function analyzeDocumentForCriteria(
-  documentText: string, 
-  criteriaId: string, 
-  language: 'ar' | 'en'
-): Promise<CriteriaAnalysis> {
-  try {
-    const prompt = IMPROVED_CRITERIA_PROMPTS[criteriaId as keyof typeof IMPROVED_CRITERIA_PROMPTS];
-    if (!prompt) {
-      throw new Error(`Unknown criteria ID: ${criteriaId}`);
-    }
-
-    const criteriaPrompt = prompt[language];
-    
-    const systemPrompt = language === 'ar' ? `
-${criteriaPrompt}
-
-قم بتحليل الوثيقة بعقلية إيجابية.
-
-معايير التقييم :
-- وجود أي إشارة للمتطلب (50%): هل يوجد أي ذكر أو إشارة لهذا المتطلب؟
-- مستوى التفصيل (30%): هل التفاصيل كافية أم تحتاج تطوير؟
-- وضوح التنفيذ (20%): هل التنفيذ واضح أم يحتاج توضيح؟
-
-نظام التقييم المحدث:
-- "pass": 60+ نقطة - يوجد دليل واضح على تلبية المتطلب (حتى لو بسيط)
-- "partial": 30-59 نقطة - يوجد إشارة للمتطلب لكن تحتاج تطوير
-- "fail": أقل من 30 نقطة - لا يوجد أي إشارة واضحة للمتطلب
-
-كن إيجابياً ومشجعاً في تحليلك. ابحث عن نقاط القوة أولاً.
-
-أرجع استجابة JSON بهذا الهيكل:
-{
-  "score": number (0-100),
-  "status": "pass" | "fail" | "partial",
-  "confidence": number (70-95),
-  "evidence": ["اقتباس محدد 1", "اقتباس محدد 2", "اقتباس محدد 3"],
-  "findings": "تحليل إيجابي ومتوازن يبرز نقاط القوة أولاً ثم يذكر فرص التحسين",
-  "recommendations": ["توصية بناءة 1", "توصية بناءة 2", "توصية بناءة 3"]
-}
-` : `
-${criteriaPrompt}
-
-Analyze the document with a positive and lenient mindset. This is a real document submitted by a ministry to DGA, so look for any positive evidence even if simple.
-
-Lenient Evaluation Criteria:
-- Any reference to the requirement (50%): Is there any mention or reference to this requirement?
-- Level of detail (30%): Are the details sufficient or need development?
-- Implementation clarity (20%): Is implementation clear or needs clarification?
-
-Updated Scoring System:
-- "pass": 60+ points - Clear evidence of meeting the requirement (even if simple)
-- "partial": 30-59 points - Reference to requirement but needs development
-- "fail": Less than 30 points - No clear reference to the requirement
-
-Be positive and encouraging in your analysis. Look for strengths first.
-
-Return a JSON response with this structure:
-{
-  "score": number (0-100),
-  "status": "pass" | "fail" | "partial",
-  "confidence": number (70-95),
-  "evidence": ["specific quote 1", "specific quote 2", "specific quote 3"],
-  "findings": "positive and balanced analysis highlighting strengths first then improvement opportunities",
-  "recommendations": ["constructive recommendation 1", "constructive recommendation 2", "constructive recommendation 3"]
-}
-`;
-
-    // Limit document text to prevent token overflow
-    const maxTextLength = 35000;
-    let limitedText = documentText;
-    if (documentText.length > maxTextLength) {
-      limitedText = documentText.substring(0, maxTextLength) + '\n\n[Text truncated due to length...]';
-    }
-
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o",
-      messages: [
-        {
-          role: "system",
-          content: systemPrompt
-        },
-        {
-          role: "user",
-          content: `${language === 'ar' ? 'محتوى الوثيقة للتحليل مقابل المتطلب' : 'Document content for analysis against requirement'} ${criteriaId}:\n\n${limitedText}`
-        }
-      ],
-      temperature: 0.2,
-      max_tokens: 2000,
-      response_format: { type: "json_object" }
-    });
-
-    const responseContent = response.choices[0].message.content;
-    if (!responseContent) {
-      throw new Error('Empty response from OpenAI API');
-    }
-
-    let result;
-    try {
-      result = JSON.parse(responseContent);
-    } catch (parseError) {
-      console.error('JSON parsing error:', parseError);
-      console.error('Response content:', responseContent);
-      throw new Error('Invalid JSON response from OpenAI API');
-    }
-    
-    // Validate the result has required fields with default values
-    const validatedResult: CriteriaAnalysis = {
-      score: typeof result.score === 'number' ? Math.max(0, Math.min(100, result.score)) : 0,
-      status: ['pass', 'fail', 'partial'].includes(result.status) ? result.status : 'fail',
-      confidence: typeof result.confidence === 'number' ? Math.max(70, Math.min(95, result.confidence)) : 75,
-      evidence: Array.isArray(result.evidence) ? result.evidence.slice(0, 5) : [],
-      findings: typeof result.findings === 'string' ? result.findings : 'No analysis available',
-      recommendations: Array.isArray(result.recommendations) ? result.recommendations.slice(0, 5) : []
-    };
-
-    // Additional validation to ensure we have meaningful data
-    if (!validatedResult.findings || validatedResult.findings === 'No analysis available') {
-      throw new Error('Analysis result missing required findings');
-    }
-    
-    return validatedResult;
-  } catch (error) {
-    console.error('OpenAI API Error for criteria', criteriaId, ':', error);
-    
-    // Provide more specific error messages
-    if (error instanceof Error) {
-      if (error.message.includes('JSON')) {
-        throw new Error(language === 'ar' 
-          ? 'خطأ في تحليل استجابة الذكاء الاصطناعي. يرجى المحاولة مرة أخرى.'
-          : 'Error parsing AI response. Please try again.');
-      } else if (error.message.includes('API')) {
-        throw new Error(language === 'ar' 
-          ? 'فشل في الاتصال بخدمة الذكاء الاصطناعي. يرجى التحقق من مفتاح API.'
-          : 'Failed to connect to AI service. Please check your API key.');
-      }
-    }
-    
-    throw new Error(language === 'ar' 
-      ? 'فشل في تحليل الوثيقة. يرجى التحقق من مفتاح API والمحاولة مرة أخرى.'
-      : 'Failed to analyze document. Please check your API key and try again.');
-  }
-}
 
 export async function analyzeDocument(documentText: string, language: 'ar' | 'en'): Promise<AnalysisResult> {
   try {

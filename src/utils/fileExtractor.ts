@@ -1,14 +1,27 @@
+import { fileToBase64 } from './fileUtils';
+import { extractTextFromImageWithVision } from '../services/openaiService';
+
 export async function extractTextFromFile(file: File): Promise<string> {
+  console.log(`🔍 Starting extraction for: ${file.name}`);
+  console.log(`📁 File type: ${file.type}`);
+  console.log(`📊 File size: ${(file.size / 1024).toFixed(2)} KB`);
+  
   try {
+    // Check if this is an image file that should use Vision API
+    if (isVisualDocument(file)) {
+      console.log(`📷 Image file detected: ${file.name} - using Vision API`);
+      return await extractTextFromImageFile(file);
+    }
+    
+    // For non-image files, use traditional text extraction
     if (file.type === 'application/pdf') {
-      // For PDFs, try multiple approaches to avoid ArrayBuffer issues
       return await extractTextFromPDFRobust(file);
     } else if (file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
       return await extractTextFromDOCXRobust(file);
     } else if (file.type === 'text/plain') {
       return await extractTextFromTXTRobust(file);
     } else {
-      throw new Error('Unsupported file type');
+      throw new Error(`❌ Unsupported file type: ${file.type}`);
     }
   } catch (error) {
     console.error(`❌ Error extracting text from ${file.name}:`, error);
@@ -16,32 +29,55 @@ export async function extractTextFromFile(file: File): Promise<string> {
   }
 }
 
-export function detectLanguage(text: string): 'ar' | 'en' {
-  // Arabic Unicode ranges: \u0600-\u06FF (Arabic), \u0750-\u077F (Arabic Supplement)
-  const arabicRegex = /[\u0600-\u06FF\u0750-\u077F]/g;
-  const englishRegex = /[a-zA-Z]/g;
-  
-  const arabicMatches = text.match(arabicRegex) || [];
-  const englishMatches = text.match(englishRegex) || [];
-  
-  // Return the language with more characters
-  return arabicMatches.length > englishMatches.length ? 'ar' : 'en';
+// New function to handle image files with Vision API
+async function extractTextFromImageFile(file: File): Promise<string> {
+  try {
+    console.log(`🔍 Converting image to base64: ${file.name}`);
+    const base64Image = await fileToBase64(file);
+    
+    console.log(`📷 Using Vision API to extract text from: ${file.name}`);
+    const language = 'ar'; // Default to Arabic for Saudi context
+    const extractedText = await extractTextFromImageWithVision(base64Image, language);
+    
+    if (!extractedText || extractedText.trim().length < 10) {
+      throw new Error(`No readable text found in image: ${file.name}`);
+    }
+    
+    console.log(`✅ Vision API extraction successful: ${extractedText.length} characters`);
+    return extractedText;
+    
+  } catch (error) {
+    console.error(`❌ Vision API extraction failed for ${file.name}:`, error);
+    throw new Error(`Failed to extract text from image "${file.name}": ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
 }
 
-export async function fileToBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    
-    reader.onload = () => {
-      const result = reader.result as string;
-      // Remove the data URL prefix (e.g., "data:image/png;base64,")
-      const base64 = result.split(',')[1];
-      resolve(base64);
-    };
-    
-    reader.onerror = () => reject(new Error('Failed to convert file to base64'));
-    reader.readAsDataURL(file);
-  });
+export function detectLanguage(text: string): 'ar' | 'en' {
+  if (!text || text.trim().length === 0) return 'ar'; // Default to Arabic for Saudi context
+  
+  const arabicChars = text.match(/[\u0600-\u06FF\u0750-\u077F]/g);
+  const englishChars = text.match(/[a-zA-Z]/g);
+  
+  const arabicCount = arabicChars ? arabicChars.length : 0;
+  const englishCount = englishChars ? englishChars.length : 0;
+  const totalChars = text.replace(/\s/g, '').length;
+  
+  const arabicRatio = totalChars > 0 ? arabicCount / totalChars : 0;
+  
+  console.log(`🌐 Language detection - Arabic: ${arabicCount}, English: ${englishCount}, Total: ${totalChars}, Arabic ratio: ${(arabicRatio * 100).toFixed(1)}%`);
+  
+  // If more than 15% Arabic characters, consider it Arabic
+  if (arabicRatio > 0.15) {
+    return 'ar';
+  }
+  
+  // If we have English characters and very few Arabic, it's English
+  if (englishCount > 10 && arabicCount < 5) {
+    return 'en';
+  }
+  
+  // Default to Arabic for Saudi government context
+  return 'ar';
 }
 
 export function isVisualDocument(file: File): boolean {
@@ -93,8 +129,12 @@ async function extractTextFromPDFRobust(file: File): Promise<string> {
     console.log('❌ Binary extraction failed:', error);
   }
 
-  // If all strategies fail, provide a helpful error
-  throw new Error(`فشل في استخراج النص من ملف PDF "${file.name}". قد يكون الملف محمي أو يحتوي على صور فقط. يرجى تجربة تحويل الملف إلى صيغة نصية أو استخدام ملف آخر.`);
+  // Strategy 3: Check if PDF might contain images and suggest Vision API
+  console.log('🔍 PDF text extraction failed - checking if it contains images...');
+  
+  // If all text extraction strategies fail, this might be a scanned PDF or image-based PDF
+  // We should suggest using Vision API for such cases
+  throw new Error(`فشل في استخراج النص من ملف PDF "${file.name}". قد يكون الملف يحتوي على صور أو نصوص ممسوحة ضوئياً. يرجى تجربة تحويل الملف إلى صيغة صورة (PNG/JPG) لاستخدام تقنية قراءة النص من الصور.`);
 }
 
 async function extractPDFAsText(file: File): Promise<string> {
