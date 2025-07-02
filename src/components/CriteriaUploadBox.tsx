@@ -1,5 +1,5 @@
 import React, { useState, useCallback } from 'react';
-import { Upload, File, X, AlertCircle, CheckCircle, XCircle, Brain, Loader } from 'lucide-react';
+import { Upload, File, X, AlertCircle, CheckCircle, XCircle, Brain, Loader, Eye, Image, FileText } from 'lucide-react';
 import { analyzeDocumentForCriteria } from '../services/openaiService';
 import { extractTextFromFile, detectLanguage, fileToBase64, isVisualDocument } from '../utils/fileExtractor';
 
@@ -36,6 +36,8 @@ export default function CriteriaUploadBox({
   const [analysis, setAnalysis] = useState<CriteriaAnalysis | null>(null);
   const [error, setError] = useState<string>('');
   const [dragActive, setDragActive] = useState(false);
+  const [processingProgress, setProcessingProgress] = useState<string>('');
+  const [processingType, setProcessingType] = useState<'text' | 'ocr' | 'vision' | null>(null);
 
   const handleDrag = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -111,37 +113,102 @@ export default function CriteriaUploadBox({
     console.log(`🚀 Starting analysis for ${files.length} files`);
     setIsAnalyzing(true);
     setError('');
+    setProcessingProgress('');
+    setProcessingType(null);
 
     try {
-      // Extract text from all files
-      console.log('📝 Starting text extraction...');
+      // Show initial progress
+      setProcessingProgress(language === 'ar' ? 'بدء معالجة الملفات...' : 'Starting file processing...');
+
+      // Extract text from all files with detailed progress
       const extractionResults = await Promise.all(
         files.map(async (file, index) => {
-          console.log(`📄 Extracting text from file ${index + 1}/${files.length}: ${file.name}`);
+          console.log(`📄 Processing file ${index + 1}/${files.length}: ${file.name}`);
           try {
+            // Update progress for each file
+            setProcessingProgress(language === 'ar' 
+              ? `معالجة الملف ${index + 1} من ${files.length}: ${file.name}` 
+              : `Processing file ${index + 1} of ${files.length}: ${file.name}`);
+
+            // Determine processing strategy
+            const isVisual = isVisualDocument(file);
+            
+            if (isVisual) {
+              setProcessingType('vision');
+              setProcessingProgress(language === 'ar' 
+                ? `قراءة النص من الصورة باستخدام الذكاء الاصطناعي: ${file.name}` 
+                : `Reading text from image using AI: ${file.name}`);
+            } else if (file.type === 'application/pdf') {
+              setProcessingType('text');
+              setProcessingProgress(language === 'ar' 
+                ? `استخراج النص من ملف PDF: ${file.name}` 
+                : `Extracting text from PDF: ${file.name}`);
+            } else {
+              setProcessingType('text');
+              setProcessingProgress(language === 'ar' 
+                ? `قراءة محتوى الملف: ${file.name}` 
+                : `Reading file content: ${file.name}`);
+            }
+
             const text = await extractTextFromFile(file);
             console.log(`✅ Successfully extracted ${text.length} characters from ${file.name}`);
+            
             return {
               fileName: file.name,
               text: text,
-              textLength: text.length
+              textLength: text.length,
+              isVisual: isVisual
             };
           } catch (error) {
             console.error(`❌ Failed to extract text from ${file.name}:`, error);
-            throw error;
+            
+            // Return error information instead of throwing
+            return {
+              fileName: file.name,
+              text: '',
+              textLength: 0,
+              error: error instanceof Error ? error.message : 'Unknown error',
+              isVisual: isVisualDocument(file)
+            };
           }
         })
       );
 
-      // Combine all text content
-      const combinedText = extractionResults.map(result => 
+      // Check for extraction errors
+      const failedExtractions = extractionResults.filter(result => result.error);
+      if (failedExtractions.length > 0) {
+        console.warn(`⚠️ ${failedExtractions.length} files failed to process:`, failedExtractions);
+        
+        // If all files failed, show error
+        if (failedExtractions.length === files.length) {
+          throw new Error(language === 'ar' 
+            ? `فشل في معالجة جميع الملفات. ${failedExtractions[0].error}`
+            : `Failed to process all files. ${failedExtractions[0].error}`);
+        }
+        
+        // If some files failed, show warning but continue
+        setError(language === 'ar' 
+          ? `تحذير: فشل في معالجة ${failedExtractions.length} من ${files.length} ملفات`
+          : `Warning: Failed to process ${failedExtractions.length} of ${files.length} files`);
+      }
+
+      // Combine successful extractions
+      const successfulExtractions = extractionResults.filter(result => !result.error && result.text.length > 0);
+      
+      if (successfulExtractions.length === 0) {
+        throw new Error(language === 'ar' 
+          ? 'لم يتم العثور على نص قابل للقراءة في أي من الملفات'
+          : 'No readable text found in any of the files');
+      }
+
+      const combinedText = successfulExtractions.map(result => 
         `=== ${result.fileName} ===\n${result.text}`
       ).join('\n\n--- NEXT DOCUMENT ---\n\n');
       
       console.log(`📊 Combined text length: ${combinedText.length} characters`);
       console.log(`🔤 Combined text preview: "${combinedText.substring(0, 200)}..."`);
 
-      // Validate extracted text
+      // Validate combined text
       if (!combinedText || combinedText.trim().length < 50) {
         const errorMsg = language === 'ar' 
           ? `لم يتم العثور على نص كافٍ في الملفات للتحليل. تم استخراج ${combinedText.length} حرف فقط.`
@@ -149,6 +216,11 @@ export default function CriteriaUploadBox({
         
         throw new Error(errorMsg);
       }
+
+      // Update progress for AI analysis
+      setProcessingProgress(language === 'ar' 
+        ? 'تحليل المحتوى باستخدام الذكاء الاصطناعي...' 
+        : 'Analyzing content with AI...');
 
       console.log(`🤖 Sending to AI for analysis...`);
       console.log(`📋 Criteria: ${criteriaId}`);
@@ -162,6 +234,9 @@ export default function CriteriaUploadBox({
       setAnalysis(result);
       onAnalysisComplete(criteriaId, result);
 
+      // Clear progress after successful completion
+      setProcessingProgress('');
+
     } catch (error) {
       console.error('❌ Analysis error:', error);
       const errorMessage = error instanceof Error ? error.message : 
@@ -170,8 +245,10 @@ export default function CriteriaUploadBox({
           : 'An error occurred while analyzing the files');
       
       setError(errorMessage);
+      setProcessingProgress('');
     } finally {
       setIsAnalyzing(false);
+      setProcessingType(null);
     }
   };
 
@@ -182,6 +259,7 @@ export default function CriteriaUploadBox({
     if (newFiles.length === 0) {
       setAnalysis(null);
       setError('');
+      setProcessingProgress('');
     } else {
       analyzeFiles(newFiles);
     }
@@ -225,9 +303,9 @@ export default function CriteriaUploadBox({
 
   const getFileTypeIcon = (file: File) => {
     if (file.type.startsWith('image/')) {
-      return <File className="w-5 h-5 text-purple-600" />;
+      return <Image className="w-5 h-5 text-purple-600" />;
     } else if (file.type === 'application/pdf') {
-      return <File className="w-5 h-5 text-red-600" />;
+      return <FileText className="w-5 h-5 text-red-600" />;
     }
     return <File className="w-5 h-5 text-blue-600" />;
   };
@@ -287,6 +365,14 @@ export default function CriteriaUploadBox({
               ? '🤖 تحليل ذكي محسّن للوثائق العربية'
               : '🤖 Enhanced smart analysis for Arabic documents'}
           </p>
+          <div className={`flex items-center justify-center space-x-2 mb-3 text-xs text-blue-600 ${language === 'ar' ? 'space-x-reverse' : ''}`}>
+            <Eye className="w-4 h-4" />
+            <span>
+              {language === 'ar' 
+                ? 'يدعم قراءة النص من الصور والمستندات الممسوحة ضوئياً'
+                : 'Supports reading text from images and scanned documents'}
+            </span>
+          </div>
           <input
             type="file"
             accept=".pdf,.docx,.txt,.jpg,.jpeg,.png,.tiff,.bmp,.webp"
@@ -316,6 +402,11 @@ export default function CriteriaUploadBox({
                   </p>
                   <p className={`text-xs text-gray-500 ${language === 'ar' ? 'text-right' : 'text-left'}`}>
                     {formatFileSize(file.size)}
+                    {file.type.startsWith('image/') && (
+                      <span className="ml-2 text-purple-600">
+                        {language === 'ar' ? '(صورة - سيتم قراءة النص بالذكاء الاصطناعي)' : '(Image - Text will be read with AI)'}
+                      </span>
+                    )}
                   </p>
                 </div>
               </div>
@@ -350,13 +441,37 @@ export default function CriteriaUploadBox({
         </div>
       )}
 
-      {/* Analysis Status */}
+      {/* Analysis Status with Enhanced Progress */}
       {isAnalyzing && (
-        <div className={`mt-4 p-3 bg-blue-50 rounded-lg flex items-center space-x-2 ${language === 'ar' ? 'space-x-reverse' : ''}`}>
-          <Loader className="w-5 h-5 text-blue-600 animate-spin" />
-          <span className="text-blue-700 text-sm">
-            {language === 'ar' ? 'جاري التحليل الذكي المحسّن...' : 'Running enhanced smart analysis...'}
-          </span>
+        <div className={`mt-4 p-3 bg-blue-50 rounded-lg ${language === 'ar' ? 'text-right' : 'text-left'}`}>
+          <div className={`flex items-center space-x-2 mb-2 ${language === 'ar' ? 'space-x-reverse flex-row-reverse' : ''}`}>
+            <Loader className="w-5 h-5 text-blue-600 animate-spin" />
+            {processingType === 'vision' && <Eye className="w-5 h-5 text-purple-600" />}
+            {processingType === 'ocr' && <Eye className="w-5 h-5 text-purple-600" />}
+            {processingType === 'text' && <FileText className="w-5 h-5 text-blue-600" />}
+            <span className="text-blue-700 text-sm font-medium">
+              {language === 'ar' ? 'جاري التحليل الذكي المحسّن...' : 'Enhanced Smart Analysis in Progress...'}
+            </span>
+          </div>
+          {processingProgress && (
+            <div className="text-sm text-blue-600 bg-blue-100 rounded p-2 mb-2">
+              {processingProgress}
+            </div>
+          )}
+          {processingType === 'vision' && (
+            <div className={`text-xs text-purple-600 ${language === 'ar' ? 'text-right' : 'text-left'}`}>
+              {language === 'ar' 
+                ? '💡 يتم استخدام تقنية الذكاء الاصطناعي المتقدمة لقراءة النص من الصور'
+                : '💡 Using advanced AI technology to read text from images'}
+            </div>
+          )}
+          {processingType === 'ocr' && (
+            <div className={`text-xs text-purple-600 ${language === 'ar' ? 'text-right' : 'text-left'}`}>
+              {language === 'ar' 
+                ? '💡 يتم استخدام تقنية التعرف الضوئي على الحروف (OCR)'
+                : '💡 Using Optical Character Recognition (OCR) technology'}
+            </div>
+          )}
         </div>
       )}
 
@@ -373,6 +488,34 @@ export default function CriteriaUploadBox({
               <span className="text-sm font-medium text-purple-600">{analysis.confidence}%</span>
             </div>
           </div>
+
+          {/* Processing Method Indicator */}
+          {processingType && (
+            <div className={`flex items-center space-x-2 text-xs ${language === 'ar' ? 'space-x-reverse flex-row-reverse' : ''}`}>
+              {processingType === 'vision' ? (
+                <>
+                  <Eye className="w-4 h-4 text-purple-500" />
+                  <span className="text-purple-600">
+                    {language === 'ar' ? 'تم استخدام تقنية قراءة النص من الصور' : 'Vision AI technology was used'}
+                  </span>
+                </>
+              ) : processingType === 'ocr' ? (
+                <>
+                  <Eye className="w-4 h-4 text-purple-500" />
+                  <span className="text-purple-600">
+                    {language === 'ar' ? 'تم استخدام تقنية التعرف الضوئي على الحروف' : 'OCR technology was used'}
+                  </span>
+                </>
+              ) : (
+                <>
+                  <FileText className="w-4 h-4 text-blue-500" />
+                  <span className="text-blue-600">
+                    {language === 'ar' ? 'تم استخراج النص مباشرة' : 'Direct text extraction'}
+                  </span>
+                </>
+              )}
+            </div>
+          )}
 
           {/* Findings */}
           <div>
