@@ -187,8 +187,8 @@ async function extractPDFManually(arrayBuffer: ArrayBuffer, fileName: string): P
             .replace(/\\n/g, '\n')
             .replace(/\\r/g, '\r')
             .replace(/\\t/g, '\t')
-            .replace(/\\(/g, '(')
-            .replace(/\\)/g, ')')
+            .replace(/\\\\(/g, '(')
+            .replace(/\\\\)/g, ')')
             .replace(/\\\\/g, '\\');
           
           if (text.trim() && text.length > 1) {
@@ -294,10 +294,10 @@ async function extractTextFromDOCX(arrayBuffer: ArrayBuffer, fileName: string): 
           .map(match => {
             return match
               .replace(/<[^>]*>/g, '')
-              .replace(/&lt;/g, '<')
-              .replace(/&gt;/g, '>')
-              .replace(/&amp;/g, '&')
-              .replace(/&quot;/g, '"')
+              .replace(/</g, '<')
+              .replace(/>/g, '>')
+              .replace(/&/g, '&')
+              .replace(/"/g, '"')
               .replace(/&apos;/g, "'");
           })
           .filter(text => text.trim().length > 0)
